@@ -798,6 +798,60 @@ def test_upgrade_packages_version_option_and_upgrade_no_existing_file(pip_conf, 
     assert "small-fake-b==0.1" in out.stderr
 
 
+@pytest.mark.network
+def test_upgrade_packages_version_option_and_upgrade_no_in_file(runner):
+    """
+    piptools respects --upgrade-package/-P inline list with specified versions
+    whilst also doing --upgrade, and the package to upgrade (pin) is not in the
+    requirements.in file, but in setup.py.
+    """
+    with open("setup.py", "w") as package:
+        package.write(
+            dedent(
+                """\
+                from setuptools import setup
+                setup(install_requires=["small-fake-a", "small-fake-b"])
+                """
+            )
+        )
+    with open("requirements.txt", "w") as req_in:
+        req_in.write("small-fake-a==0.1\nsmall-fake-b==0.1")
+    out = runner.invoke(
+        cli, ["--upgrade", "-P", "small-fake-b==0.1", "-f", MINIMAL_WHEELS_PATH]
+    )
+
+    assert out.exit_code == 0
+    assert "small-fake-a==0.2" in out.stderr
+    assert "small-fake-b==0.1" in out.stderr
+
+
+@pytest.mark.network
+def test_upgrade_packages_version_option_and_upgrade_no_in_file_no_existing_file(
+    runner,
+):
+    """
+    piptools respects --upgrade-package/-P inline list with specified versions
+    whilst also doing --upgrade and the package to upgrade (pin) is not in the
+    requirements.in file, but in setup.py and the output file does not exist.
+    """
+    with open("setup.py", "w") as package:
+        package.write(
+            dedent(
+                """\
+                from setuptools import setup
+                setup(install_requires=["small-fake-a", "small-fake-b"])
+                """
+            )
+        )
+    out = runner.invoke(
+        cli, ["--upgrade", "-P", "small-fake-b==0.1", "-f", MINIMAL_WHEELS_PATH]
+    )
+
+    assert out.exit_code == 0
+    assert "small-fake-a==0.2" in out.stderr
+    assert "small-fake-b==0.1" in out.stderr
+
+
 def test_quiet_option(runner):
     with open("requirements", "w"):
         pass
