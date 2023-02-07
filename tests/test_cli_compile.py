@@ -1169,6 +1169,101 @@ def test_generate_hashes_with_annotations(runner):
 
 
 @pytest.mark.network
+@pytest.mark.parametrize("gen_hashes", (True, False))
+@pytest.mark.parametrize(
+    "annotate_options",
+    (
+        ("--no-annotate",),
+        ("--annotation-style", "line"),
+        ("--annotation-style", "split"),
+    ),
+)
+@pytest.mark.parametrize(
+    ("nl_options", "must_include", "must_exclude"),
+    (
+        pytest.param(("--newline", "lf"), b"\n", b"\r\n", id="LF"),
+        pytest.param(("--newline", "crlf"), b"\r\n", b"\n", id="CRLF"),
+        pytest.param(
+            ("--newline", "native"),
+            os.linesep.encode(),
+            {"\n": b"\r\n", "\r\n": b"\n"}[os.linesep],
+            id="native",
+        ),
+    ),
+)
+def test_override_newline(
+    runner,
+    gen_hashes,
+    annotate_options,
+    nl_options,
+    must_include,
+    must_exclude,
+    tmp_path,
+):
+    opts = annotate_options + nl_options
+    if gen_hashes:
+        opts += ("--generate-hashes",)
+
+    example_dir = tmp_path / "example_dir"
+    example_dir.mkdir()
+    in_path = example_dir / "requirements.in"
+    out_path = example_dir / "requirements.txt"
+    in_path.write_bytes(
+        b"six==1.15.0\n"
+        b"setuptools\n"
+        b"pip-tools @ git+https://github.com/jazzband/pip-tools\n"
+    )
+
+    runner.invoke(
+        cli, [*opts, f"--output-file={os.fsdecode(out_path)}", os.fsdecode(in_path)]
+    )
+    txt = out_path.read_bytes()
+
+    assert must_include in txt
+
+    if must_exclude in must_include:
+        txt = txt.replace(must_include, b"")
+    assert must_exclude not in txt
+
+    # Do it again, with --newline=preserve:
+
+    opts = annotate_options + ("--newline", "preserve")
+    if gen_hashes:
+        opts += ("--generate-hashes",)
+
+    runner.invoke(
+        cli, [*opts, f"--output-file={os.fsdecode(out_path)}", os.fsdecode(in_path)]
+    )
+    txt = out_path.read_bytes()
+
+    assert must_include in txt
+
+    if must_exclude in must_include:
+        txt = txt.replace(must_include, b"")
+    assert must_exclude not in txt
+
+
+@pytest.mark.network
+@pytest.mark.parametrize(
+    ("linesep", "must_exclude"),
+    (pytest.param("\n", "\r\n", id="LF"), pytest.param("\r\n", "\n", id="CRLF")),
+)
+def test_preserve_newline_from_input(runner, linesep, must_exclude):
+    with open("requirements.in", "wb") as req_in:
+        req_in.write(f"six{linesep}".encode())
+
+    runner.invoke(cli, ["--newline=preserve", "requirements.in"])
+    with open("requirements.txt", "rb") as req_txt:
+        txt = req_txt.read().decode()
+
+    assert linesep in txt
+
+    if must_exclude in linesep:
+        txt = txt.replace(linesep, "")
+    assert must_exclude not in txt
+
+
+@pytest.mark.network
 def test_generate_hashes_with_split_style_annotations(runner):
     with open("requirements.in", "w") as fp:
         fp.write("Django==1.11.29\n")
@@ -2472,6 +2567,70 @@ def test_multiple_extras(fake_dists, runner, make_module, fname, content, extra_
     assert "small-fake-e==0.5" in out.stderr
     assert "small-fake-f==0.6" in out.stderr
     assert "extra ==" not in out.stderr
+
+
+@pytest.mark.network
+@pytest.mark.parametrize(("fname", "content"), METADATA_TEST_CASES)
+def test_all_extras(fake_dists, runner, make_module, fname, content):
+    """
+    Test passing `--all-extras` includes all applicable extras.
+    """
+    meta_path = make_module(fname=fname, content=content)
+    out = runner.invoke(
+        cli,
+        [
+            "-n",
+            "--all-extras",
+            "--find-links",
+            fake_dists,
+            "--no-annotate",
+            "--no-emit-options",
+            "--no-header",
+            meta_path,
+        ],
+    )
+    assert out.exit_code == 0, out.stderr
+    assert (
+        dedent(
+            """\
+            small-fake-a==0.1
+            small-fake-b==0.2
+            small-fake-c==0.3
+            small-fake-d==0.4
+            small-fake-e==0.5
+            small-fake-f==0.6
+            Dry-run, so nothing updated.
+            """
+        )
+        == out.stderr
+    )
+
+
+# This should not depend on the metadata format so testing all cases is wasteful
+@pytest.mark.parametrize(("fname", "content"), METADATA_TEST_CASES[:1])
+def test_all_extras_fail_with_extra(fake_dists, runner, make_module, fname, content):
+    """
+    Test that passing `--all-extras` and `--extra` fails.
+    """
+    meta_path = make_module(fname=fname, content=content)
+    out = runner.invoke(
+        cli,
+        [
+            "-n",
+            "--all-extras",
+            "--extra",
+            "dev",
+            "--find-links",
+            fake_dists,
+            "--no-annotate",
+            "--no-emit-options",
+            "--no-header",
+            meta_path,
+        ],
+    )
+    assert out.exit_code == 2
+    exp = "--extra has no effect when used with --all-extras"
+    assert exp in out.stderr
 
 
 def test_extras_fail_with_requirements_in(runner, tmpdir):
