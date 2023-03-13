@@ -2361,7 +2361,7 @@ def test_ignore_compiled_unavailable_version(pip_conf, runner, current_resolver)
 
     assert (
         "Discarding small-fake-a==9999 "
-        "(from -r requirements.txt (line 1)) "
+        f"(from -r {os.path.abspath('requirements.txt')} (line 1)) "
         "to proceed the resolution"
     ) in out.stderr
 
