@@ -1,3 +1,98 @@
+## 6.12.3 (2023-03-01)
+
+Bug Fixes:
+
+- Remove extras from user-supplied constraints in backtracking resolver
+  ([#1808](https://github.com/jazzband/pip-tools/pull/1808)). Thanks @thomdixon
+- Fix for sync error when the ireqs being merged have no names
+  ([#1802](https://github.com/jazzband/pip-tools/pull/1802)). Thanks @richafrank
+
+## 6.12.2 (2022-12-25)
+
+Bug Fixes:
+
+- Raise error if input and output filenames are matched
+  ([#1787](https://github.com/jazzband/pip-tools/pull/1787)). Thanks @atugushev
+- Add `pyproject.toml` as default input file format
+  ([#1780](https://github.com/jazzband/pip-tools/pull/1780)). Thanks @berislavlopac
+- Fix a regression with unsafe packages for `--allow-unsafe`
+  ([#1788](https://github.com/jazzband/pip-tools/pull/1788)). Thanks @q0w
+
+## 6.12.1 (2022-12-16)
+
+Bug Fixes:
+
+- Set explicitly packages for setuptools
+  ([#1782](https://github.com/jazzband/pip-tools/pull/1782)). Thanks @q0w
+
+## 6.12.0 (2022-12-13)
+
+Features:
+
+- Add `--no-index` flag to `pip-compile`
+  ([#1745](https://github.com/jazzband/pip-tools/pull/1745)). Thanks @atugushev
+
+Bug Fixes:
+
+- Treat `--upgrade-packages` PKGSPECs as constraints (not just minimums), consistently
+  ([#1578](https://github.com/jazzband/pip-tools/pull/1578)). Thanks @AndydeCleyre
+- Filter out the user provided unsafe packages
+  ([#1766](https://github.com/jazzband/pip-tools/pull/1766)). Thanks @q0w
+- Adopt PEP-621 for packaging
+  ([#1763](https://github.com/jazzband/pip-tools/pull/1763)). Thanks @ssbarnea
+
+## 6.11.0 (2022-11-30)
+
+Features:
+
+- Add `pyproject.toml` file ([#1643](https://github.com/jazzband/pip-tools/pull/1643)).
+  Thanks @otherJL0
+- Support build isolation using `setuptools/pyproject.toml` requirement files
+  ([#1727](https://github.com/jazzband/pip-tools/pull/1727)). Thanks @atugushev
+
+Bug Fixes:
+
+- Improve punctuation/grammar with `pip-compile` header
+  ([#1547](https://github.com/jazzband/pip-tools/pull/1547)). Thanks @blueyed
+- Generate hashes for all available candidates
+  ([#1723](https://github.com/jazzband/pip-tools/pull/1723)). Thanks @neykov
+
+Other Changes:
+
+- Bump click minimum version to `>= 8`
+  ([#1733](https://github.com/jazzband/pip-tools/pull/1733)). Thanks @atugushev
+- Bump pip minimum version to `>= 22.2`
+  ([#1729](https://github.com/jazzband/pip-tools/pull/1729)). Thanks @atugushev
+
+## 6.10.0 (2022-11-13)
+
+Features:
+
+- Deprecate `pip-compile --resolver=legacy`
+  ([#1724](https://github.com/jazzband/pip-tools/pull/1724)). Thanks @atugushev
+- Prompt user to use the backtracking resolver on errors
+  ([#1719](https://github.com/jazzband/pip-tools/pull/1719)). Thanks @maxfenv
+- Add support for Python 3.11 final
+  ([#1708](https://github.com/jazzband/pip-tools/pull/1708)). Thanks @hugovk
+- Add `--newline=[LF|CRLF|native|preserve]` option to `pip-compile`
+  ([#1652](https://github.com/jazzband/pip-tools/pull/1652)). Thanks @AndydeCleyre
+
+Bug Fixes:
+
+- Fix inconsistent handling of constraints comments with backtracking resolver
+  ([#1713](https://github.com/jazzband/pip-tools/pull/1713)). Thanks @mkniewallner
+- Fix some encoding warnings in Python 3.10 (PEP 597)
+  ([#1614](https://github.com/jazzband/pip-tools/pull/1614)). Thanks @GalaxySnail
+
+Other Changes:
+
+- Update pip-tools version in the README's pre-commit examples
+  ([#1701](https://github.com/jazzband/pip-tools/pull/1701)). Thanks @Kludex
+- Document use of the backtracking resolver
+  ([#1718](https://github.com/jazzband/pip-tools/pull/1718)). Thanks @maxfenv
+- Use HTTPS in a readme link ([#1716](https://github.com/jazzband/pip-tools/pull/1716)).
+  Thanks @Arhell
+
 ## 6.9.0 (2022-10-05)
 
 Features:

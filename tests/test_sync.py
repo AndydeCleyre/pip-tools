@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import os
 import sys
@@ -106,6 +108,26 @@ def test_merge_urls(from_line):
         from_line("file:///example.zip#egg=example==1.0"),
         from_line("example==1.0"),
         from_line("file:///unrelated.zip"),
+    ]
+
+    assert Counter(requirements[1:]) == Counter(
+        merge(requirements, ignore_conflicts=False)
+    )
+
+
+@pytest.mark.parametrize(
+    "install_req",
+    (
+        "from_line",
+        "from_editable",
+    ),
+)
+def test_merge_no_name_urls(install_req, request):
+    install_req = request.getfixturevalue(install_req)
+    url = "file:///example.zip"
+    requirements = [
+        install_req(url),
+        install_req(url),
     ]
 
     assert Counter(requirements[1:]) == Counter(

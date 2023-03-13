@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import itertools
 import os
 import shlex
 import sys
 import tempfile
-from typing import IO, Any, BinaryIO, List, Optional, Tuple, Union, cast
+from typing import IO, Any, BinaryIO, cast
 
 import click
 from build import BuildBackendException
@@ -14,9 +16,9 @@ from pip._internal.req import InstallRequirement
 from pip._internal.req.constructors import install_req_from_line
 from pip._internal.utils.misc import redact_auth_from_url
 
-from .._compat import IS_CLICK_VER_8_PLUS, parse_requirements
+from .._compat import parse_requirements
 from ..cache import DependencyCache
-from ..exceptions import PipToolsError
+from ..exceptions import NoCandidateFound, PipToolsError
 from ..locations import CACHE_DIR
 from ..logging import log
 from ..repositories import LocalRequirementsRepository, PyPIRepository
@@ -32,12 +34,14 @@ from ..utils import (
 )
 from ..writer import OutputWriter
 
-DEFAULT_REQUIREMENTS_FILE = "requirements.in"
+DEFAULT_REQUIREMENTS_FILES = (
+    "requirements.in",
+    "setup.py",
+    "pyproject.toml",
+    "setup.cfg",
+)
 DEFAULT_REQUIREMENTS_OUTPUT_FILE = "requirements.txt"
 METADATA_FILENAMES = frozenset({"setup.py", "setup.cfg", "pyproject.toml"})
-
-# TODO: drop click 7 and remove this block, pass directly to version_option
-version_option_kwargs = {"package_name": "pip-tools"} if IS_CLICK_VER_8_PLUS else {}
 
 
 def _get_default_option(option_name: str) -> Any:
@@ -51,7 +55,7 @@ def _get_default_option(option_name: str) -> Any:
 
 
 def _determine_linesep(
-    strategy: str = "preserve", filenames: Tuple[str, ...] = ()
+    strategy: str = "preserve", filenames: tuple[str, ...] = ()
 ) -> str:
     """
     Determine and return linesep string for OutputWriter to use.
@@ -80,7 +84,7 @@ def _determine_linesep(
 
 
 @click.command(context_settings={"help_option_names": ("-h", "--help")})
-@click.version_option(**version_option_kwargs)
+@click.version_option(package_name="pip-tools")
 @click.pass_context
 @click.option("-v", "--verbose", count=True, help="Show more output")
 @click.option("-q", "--quiet", count=True, help="Give less output")
@@ -127,6 +131,11 @@ def _determine_linesep(
     help="Change index URL (defaults to {index_url})".format(
         index_url=redact_auth_from_url(_get_default_option("index_url"))
     ),
+)
+@click.option(
+    "--no-index",
+    is_flag=True,
+    help="Ignore package index (only looking at --find-links URLs instead).",
 )
 @click.option(
     "--extra-index-url",
@@ -318,21 +327,22 @@ def cli(
     dry_run: bool,
     pre: bool,
     rebuild: bool,
-    extras: Tuple[str, ...],
+    extras: tuple[str, ...],
     all_extras: bool,
-    find_links: Tuple[str, ...],
+    find_links: tuple[str, ...],
     index_url: str,
-    extra_index_url: Tuple[str, ...],
-    cert: Optional[str],
-    client_cert: Optional[str],
-    trusted_host: Tuple[str, ...],
+    no_index: bool,
+    extra_index_url: tuple[str, ...],
+    cert: str | None,
+    client_cert: str | None,
+    trusted_host: tuple[str, ...],
     header: bool,
     emit_trusted_host: bool,
     annotate: bool,
     annotation_style: str,
     upgrade: bool,
-    upgrade_packages: Tuple[str, ...],
-    output_file: Union[LazyFile, IO[Any], None],
+    upgrade_packages: tuple[str, ...],
+    output_file: LazyFile | IO[Any] | None,
     write_relative_to_output: bool,
     read_relative_to_input: bool,
     newline: str,
@@ -340,16 +350,16 @@ def cli(
     strip_extras: bool,
     generate_hashes: bool,
     reuse_hashes: bool,
-    src_files: Tuple[str, ...],
+    src_files: tuple[str, ...],
     max_rounds: int,
     build_isolation: bool,
     emit_find_links: bool,
     cache_dir: str,
-    pip_args_str: Optional[str],
+    pip_args_str: str | None,
     resolver_name: str,
     emit_index_url: bool,
     emit_options: bool,
-    unsafe_package: Tuple[str, ...],
+    unsafe_package: tuple[str, ...],
 ) -> None:
     """
     Compiles requirements.txt from requirements.in, pyproject.toml, setup.cfg,
@@ -358,16 +368,15 @@ def cli(
     log.verbosity = verbose - quiet
 
     if len(src_files) == 0:
-        if os.path.exists(DEFAULT_REQUIREMENTS_FILE):
-            src_files = (DEFAULT_REQUIREMENTS_FILE,)
-        elif os.path.exists("setup.py"):
-            src_files = ("setup.py",)
+        for file_path in DEFAULT_REQUIREMENTS_FILES:
+            if os.path.exists(file_path):
+                src_files = (file_path,)
+                break
         else:
             raise click.BadParameter(
                 (
-                    "If you do not specify an input file, "
-                    "the default is {} or setup.py"
-                ).format(DEFAULT_REQUIREMENTS_FILE)
+                    "If you do not specify an input file, the default is one of: {}"
+                ).format(", ".join(DEFAULT_REQUIREMENTS_FILES))
             )
 
     src_files = tuple(src if src == "-" else os.path.abspath(src) for src in src_files)
@@ -389,8 +398,6 @@ def cli(
         # Otherwise derive the output file from the source file
         else:
             file_name = os.path.splitext(src_files[0])[0] + ".txt"
-            if file_name == src_files[0]:
-                file_name += ".txt"
 
         output_file = click.open_file(file_name, "w+b", atomic=True, lazy=True)
 
@@ -399,6 +406,19 @@ def cli(
         # only LazyFile has close_intelligently, newer IO[Any] does not
         if isinstance(output_file, LazyFile):  # pragma: no cover
             ctx.call_on_close(safecall(output_file.close_intelligently))
+
+    if output_file.name != "-" and output_file.name in src_files:
+        raise click.BadArgumentUsage(
+            f"input and output filenames must not be matched: {output_file.name}"
+        )
+
+    if resolver_name == "legacy":
+        log.warning(
+            "WARNING: the legacy dependency resolver is deprecated and will be removed"
+            " in future versions of pip-tools. The default resolver will be changed to"
+            " 'backtracking' in pip-tools 7.0.0. Specify --resolver=backtracking to"
+            " silence this warning."
+        )
 
     ###
     # Setup
@@ -410,6 +430,8 @@ def cli(
         pip_args.extend(["-f", link])
     if index_url:
         pip_args.extend(["-i", index_url])
+    if no_index:
+        pip_args.extend(["--no-index"])
     for extra_index in extra_index_url:
         pip_args.extend(["--extra-index-url", extra_index])
     if cert:
@@ -435,10 +457,7 @@ def cli(
         key_from_ireq(install_req): install_req for install_req in upgrade_reqs_gen
     }
 
-    existing_pins_to_upgrade = set()
-
-    # Exclude packages from --upgrade-package/-P from the existing
-    # constraints, and separately gather pins to be upgraded
+    # Exclude packages from --upgrade-package/-P from the existing constraints
     existing_pins = {}
 
     # Proxy with a LocalRequirementsRepository if --upgrade is not specified
@@ -461,9 +480,7 @@ def cli(
 
         for ireq in filter(is_pinned_requirement, ireqs):
             key = key_from_ireq(ireq)
-            if key in upgrade_install_reqs:
-                existing_pins_to_upgrade.add(key)
-            else:
+            if key not in upgrade_install_reqs:
                 existing_pins[key] = ireq
         repository = LocalRequirementsRepository(
             existing_pins, repository, reuse_hashes=reuse_hashes
@@ -473,7 +490,7 @@ def cli(
     # Parsing/collecting initial requirements
     ###
 
-    constraints: List[InstallRequirement] = []
+    constraints: list[InstallRequirement] = []
     setup_file_found = False
     for src_file in src_files:
         is_setup_file = os.path.basename(src_file) in METADATA_FILENAMES
@@ -500,7 +517,8 @@ def cli(
             setup_file_found = True
             try:
                 metadata = project_wheel_metadata(
-                    os.path.dirname(os.path.abspath(src_file))
+                    os.path.dirname(os.path.abspath(src_file)),
+                    isolated=build_isolation,
                 )
             except BuildBackendException as e:
                 log.error(str(e))
@@ -537,6 +555,27 @@ def cli(
                 )
             )
 
+    if upgrade_packages:
+        constraints_file = tempfile.NamedTemporaryFile(mode="wt", delete=False)
+        constraints_file.write("\n".join(upgrade_packages))
+        constraints_file.flush()
+        try:
+            reqs = list(
+                parse_requirements(
+                    constraints_file.name,
+                    finder=repository.finder,
+                    session=repository.session,
+                    options=repository.options,
+                    constraint=True,
+                )
+            )
+        finally:
+            constraints_file.close()
+            os.unlink(constraints_file.name)
+        for req in reqs:
+            req.comes_from = None
+        constraints.extend(reqs)
+
     extras = tuple(itertools.chain.from_iterable(ex.split(",") for ex in extras))
 
     if extras and not setup_file_found:
@@ -547,19 +586,21 @@ def cli(
         key_from_ireq(ireq) for ireq in constraints if not ireq.constraint
     }
 
-    allowed_upgrades = primary_packages | existing_pins_to_upgrade
     constraints.extend(
-        ireq for key, ireq in upgrade_install_reqs.items() if key in allowed_upgrades
+        ireq for key, ireq in upgrade_install_reqs.items() if key in primary_packages
     )
 
     constraints = [req for req in constraints if req.match_markers(extras)]
     for req in constraints:
         drop_extras(req)
 
-    log.debug("Using indexes:")
-    with log.indentation():
-        for index_url in dedup(repository.finder.index_urls):
-            log.debug(redact_auth_from_url(index_url))
+    if repository.finder.index_urls:
+        log.debug("Using indexes:")
+        with log.indentation():
+            for index_url in dedup(repository.finder.index_urls):
+                log.debug(redact_auth_from_url(index_url))
+    else:
+        log.debug("Ignoring indexes.")
 
     if repository.finder.find_links:
         log.debug("")
@@ -582,6 +623,16 @@ def cli(
         )
         results = resolver.resolve(max_rounds=max_rounds)
         hashes = resolver.resolve_hashes(results) if generate_hashes else None
+    except NoCandidateFound as e:
+        if resolver_cls == LegacyResolver:  # pragma: no branch
+            log.error(
+                "Using legacy resolver. "
+                "Consider using backtracking resolver with "
+                "`--resolver=backtracking`."
+            )
+
+        log.error(str(e))
+        sys.exit(2)
     except PipToolsError as e:
         log.error(str(e))
         sys.exit(2)
@@ -620,6 +671,7 @@ def cli(
     )
     writer.write(
         results=results,
+        unsafe_packages=resolver.unsafe_packages,
         unsafe_requirements=resolver.unsafe_constraints,
         markers={
             key_from_ireq(ireq): ireq.markers for ireq in constraints if ireq.markers

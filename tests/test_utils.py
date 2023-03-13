@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import operator
 import os
@@ -297,7 +299,7 @@ def test_key_from_ireq_normalization(from_line):
         ("file:///example.zip", True),
         ("https://example.com/example.zip", True),
         ("https://example.com/example.zip#egg=example", True),
-        ("git+https://github.com/jazzband/pip-tools@master", True),
+        ("git+https://github.com/jazzband/pip-tools@main", True),
     ),
 )
 def test_is_url_requirement(caplog, from_line, line, expected):

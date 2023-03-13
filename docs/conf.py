@@ -1,6 +1,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 """Configuration file for the Sphinx documentation builder."""
 
+from __future__ import annotations
+
 from functools import partial
 from pathlib import Path
 
@@ -20,7 +22,9 @@ copyright = f"The {author}"
 
 # The short X.Y version
 version = ".".join(
-    get_scm_version(local_scheme="no-local-version",).split(
+    get_scm_version(
+        local_scheme="no-local-version",
+    ).split(
         "."
     )[:3],
 )
