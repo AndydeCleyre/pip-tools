@@ -30,6 +30,7 @@ from ..utils import (
     drop_extras,
     is_pinned_requirement,
     key_from_ireq,
+    parse_requirements_from_wheel_metadata,
     working_dir,
 )
 from ..writer import OutputWriter
@@ -446,6 +447,8 @@ def cli(
         pip_args.append("--no-build-isolation")
     if resolver_name == "legacy":
         pip_args.extend(["--use-deprecated", "legacy-resolver"])
+    if resolver_name == "backtracking" and cache_dir:
+        pip_args.extend(["--cache-dir", cache_dir])
     pip_args.extend(right_args)
 
     repository: BaseRepository
@@ -524,19 +527,17 @@ def cli(
                 log.error(str(e))
                 log.error(f"Failed to parse {os.path.abspath(src_file)}")
                 sys.exit(2)
-            with working_dir(os.path.dirname(os.path.abspath(output_file.name))):
-                comes_from = (
-                    f"{metadata.get_all('Name')[0]} ({os.path.relpath(src_file)})"
-                )
+
+            output_dir = os.path.dirname(os.path.abspath(output_file.name))
             with working_dir(
                 os.path.dirname(src_file) if read_relative_to_input else None
             ):
                 constraints.extend(
-                    [
-                        install_req_from_line(req, comes_from=comes_from)
-                        for req in metadata.get_all("Requires-Dist") or []
-                    ]
+                    parse_requirements_from_wheel_metadata(
+                        metadata=metadata, src_file=src_file, output_dir=output_dir
+                    )
                 )
+
             if all_extras:
                 if extras:
                     msg = "--extra has no effect when used with --all-extras"
