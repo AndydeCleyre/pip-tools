@@ -470,7 +470,8 @@ def cli(
         output_file_is_empty = os.path.getsize(output_file.name) == 0
         if upgrade_install_reqs and output_file_is_empty:
             log.warning(
-                f"WARNING: the output file {output_file.name} exists but is empty. "
+                f"WARNING: the output file {os.path.basename(output_file.name)} "
+                "exists but is empty. "
                 "Pip-tools cannot upgrade only specific packages (using -P/--upgrade-package) "
                 "without an existing pin file to provide constraints. "
                 "This often occurs if you redirect standard output to your output file, "
