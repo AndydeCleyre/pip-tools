@@ -3,16 +3,16 @@ repos:
     rev: 23.3.0
     hooks:
       - id: black
-        args: [--target-version=py37]
+        args: [--target-version=py38]
   - repo: https://github.com/PyCQA/isort
     rev: 5.12.0
     hooks:
       - id: isort
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.3.1
+    rev: v3.9.0
     hooks:
       - id: pyupgrade
-        args: [--py37-plus]
+        args: [--py38-plus]
   - repo: https://github.com/PyCQA/flake8
     rev: 6.0.0
     hooks:
@@ -20,7 +20,7 @@ repos:
         additional_dependencies:
           - flake8-pytest-style
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.2.0
+    rev: v1.4.1
     hooks:
       - id: mypy
         # Avoid error: Duplicate module named 'setup'
@@ -40,7 +40,7 @@ repos:
         args: [--ini, .bandit]
         exclude: ^tests/
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.0.0-alpha.9-for-vscode
+    rev: v3.0.0
     hooks:
       - id: prettier
         additional_dependencies:

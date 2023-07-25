@@ -8,24 +8,30 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 import pytest
+import tomli_w
 from click.testing import CliRunner
 from pip._internal.commands.install import InstallCommand
 from pip._internal.index.package_finder import PackageFinder
 from pip._internal.models.candidate import InstallationCandidate
+from pip._internal.models.link import Link
 from pip._internal.network.session import PipSession
 from pip._internal.req.constructors import (
     install_req_from_editable,
     install_req_from_line,
 )
+from pip._internal.utils.direct_url_helpers import direct_url_from_link
 from pip._vendor.packaging.version import Version
 from pip._vendor.pkg_resources import Requirement
 
-from piptools._compat.pip_compat import PIP_VERSION, uses_pkg_resources
+from piptools._compat import PIP_VERSION, Distribution
 from piptools.cache import DependencyCache
 from piptools.exceptions import NoCandidateFound
+from piptools.locations import CONFIG_FILE_NAME
 from piptools.logging import log
 from piptools.repositories import PyPIRepository
 from piptools.repositories.base import BaseRepository
@@ -34,7 +40,6 @@ from piptools.utils import (
     as_tuple,
     is_url_requirement,
     key_from_ireq,
-    key_from_req,
     make_install_requirement,
 )
 
@@ -121,34 +126,6 @@ class FakeRepository(BaseRepository):
         """Not used"""
 
 
-class FakeInstalledDistribution:
-    def __init__(self, line, deps=None):
-        if deps is None:
-            deps = []
-        self.dep_strs = deps
-        self.deps = [Requirement.parse(d) for d in deps]
-
-        self.req = Requirement.parse(line)
-
-        self.key = key_from_req(self.req)
-        self.specifier = self.req.specifier
-
-        self.version = line.split("==")[1]
-
-    # The Distribution interface has changed between pkg_resources and
-    # importlib.metadata.
-    if uses_pkg_resources:
-
-        def requires(self):
-            return self.deps
-
-    else:
-
-        @property
-        def requires(self):
-            return self.dep_strs
-
-
 def pytest_collection_modifyitems(config, items):
     for item in items:
         # Mark network tests as flaky
@@ -158,7 +135,22 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def fake_dist():
-    return FakeInstalledDistribution
+    def _fake_dist(line, deps=None):
+        if deps is None:
+            deps = []
+        req = Requirement.parse(line)
+        key = req.name
+        if "==" in line:
+            version = line.split("==")[1]
+        else:
+            version = "0+unknown"
+        requires = [Requirement.parse(d) for d in deps]
+        direct_url = None
+        if req.url:
+            direct_url = direct_url_from_link(Link(req.url))
+        return Distribution(key, version, requires, direct_url)
+
+    return _fake_dist
 
 
 @pytest.fixture
@@ -450,3 +442,25 @@ def _reset_log():
     with other tests that depend on it.
     """
     log.reset()
+
+
+@pytest.fixture
+def make_config_file(tmpdir_cwd):
+    """
+    Make a config file for pip-tools with a given parameter set to a specific
+    value, returning a ``pathlib.Path`` to the config file.
+    """
+
+    def _maker(
+        pyproject_param: str, new_default: Any, config_file_name: str = CONFIG_FILE_NAME
+    ) -> Path:
+        # Make a config file with this one config default override
+        config_path = Path(tmpdir_cwd) / pyproject_param
+        config_file = config_path / config_file_name
+        config_path.mkdir(exist_ok=True)
+
+        config_to_dump = {"tool": {"pip-tools": {pyproject_param: new_default}}}
+        config_file.write_text(tomli_w.dumps(config_to_dump))
+        return config_file.relative_to(tmpdir_cwd)
+
+    return _maker

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # https://peps.python.org/pep-0621/#readme
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 dynamic = ["version"]
 name = "pip-tools"
 description = "pip-tools keeps your pinned dependencies fresh."
-readme = "README.rst"
+readme = "README.md"
 authors = [{ "name" = "Vincent Driessen", "email" = "me@nvie.com" }]
 license = { text = "BSD" }
 classifiers = [
@@ -22,7 +22,6 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.7",
   "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: Implementation :: CPython",
@@ -40,6 +39,7 @@ dependencies = [
   "build",
   "click >= 8",
   "pip >= 22.2",
+  "tomli; python_version < '3.11'",
   # indirect dependencies
   "setuptools", # typically needed when pip-tools invokes setup.py
   "wheel", # pip plugin needed by pip-tools
@@ -57,6 +57,7 @@ testing = [
   "pytest >= 7.2.0",
   "pytest-rerunfailures",
   "pytest-xdist",
+  "tomli-w",
   # build deps for tests
   "flit_core >=2,<4",
   "poetry_core>=1.0.0",
@@ -109,3 +110,4 @@ markers = ["network: mark tests that require internet access"]
 include = ["piptools*"]
 
 [tool.setuptools_scm]
+local_scheme = "dirty-tag"

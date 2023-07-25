@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import collections
 import copy
+import difflib
 import itertools
 import json
 import os
 import platform
 import re
 import shlex
+import sys
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, TypeVar, cast
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 import click
 import pip
@@ -21,12 +29,14 @@ from pip._internal.utils.misc import redact_auth_from_url
 from pip._internal.utils.urls import path_to_url, url_to_path
 from pip._internal.vcs import is_url
 from pip._vendor.packaging.markers import Marker
+from pip._vendor.packaging.requirements import Requirement
 from pip._vendor.packaging.specifiers import SpecifierSet
 from pip._vendor.packaging.utils import canonicalize_name
 from pip._vendor.packaging.version import Version
 from pip._vendor.packaging.version import parse as parse_version
-from pip._vendor.pkg_resources import Distribution, Requirement, get_distribution
+from pip._vendor.pkg_resources import get_distribution
 
+from piptools.locations import CONFIG_FILE_NAME
 from piptools.subprocess_utils import run_python_snippet
 
 if TYPE_CHECKING:
@@ -55,7 +65,11 @@ COMPILE_EXCLUDE_OPTIONS = {
     "--verbose",
     "--cache-dir",
     "--no-reuse-hashes",
+    "--no-config",
 }
+
+# Set of option that are only negative, i.e. --no-<option>
+ONLY_NEGATIVE_OPTIONS = {"--no-index"}
 
 
 def key_from_ireq(ireq: InstallRequirement) -> str:
@@ -66,15 +80,9 @@ def key_from_ireq(ireq: InstallRequirement) -> str:
         return key_from_req(ireq.req)
 
 
-def key_from_req(req: InstallRequirement | Distribution | Requirement) -> str:
+def key_from_req(req: InstallRequirement | Requirement) -> str:
     """Get an all-lowercase version of the requirement's name."""
-    if hasattr(req, "key"):
-        # from pkg_resources, such as installed dists for pip-sync
-        key = req.key
-    else:
-        # from packaging, such as install requirements from requirements.txt
-        key = req.name
-    return str(canonicalize_name(key))
+    return str(canonicalize_name(req.name))
 
 
 def comment(text: str) -> str:
@@ -218,16 +226,6 @@ def _build_direct_reference_best_efforts(ireq: InstallRequirement) -> str:
         f"{ireq.link.url_without_fragment}"
         f"{fragment_string(ireq, omit_egg=True)}"
     )
-    # Check if there is any fragment to add to the URI.
-    # if ireq.link.subdirectory_fragment:
-    #     fragments.append(f"subdirectory={ireq.link.subdirectory_fragment}")
-
-    # if ireq.link.has_hash:
-    #     fragments.append(f"{ireq.link.hash_name}={ireq.link.hash}")
-
-    # Then add the fragments into the URI, if any.
-    # if fragments:
-    #     direct_reference += f"#{'&'.join(fragments)}"
 
 
 def format_specifier(ireq: InstallRequirement) -> str:
@@ -239,7 +237,7 @@ def format_specifier(ireq: InstallRequirement) -> str:
     specs = ireq.specifier if ireq.req is not None else SpecifierSet()
     # FIXME: remove ignore type marker once the following issue get fixed
     #        https://github.com/python/mypy/issues/9656
-    specs = sorted(specs, key=lambda x: x.version)  # type: ignore
+    specs = sorted(specs, key=lambda x: x.version)
     return ",".join(str(s) for s in specs) or "<any>"
 
 
@@ -487,6 +485,12 @@ def get_compile_command(click_ctx: click.Context) -> str:
         if option_long_name in COMPILE_EXCLUDE_OPTIONS:
             continue
 
+        # Exclude config option if it's the default one
+        if option_long_name == "--config":
+            default_config = select_config_file(click_ctx.params.get("src_files", ()))
+            if value == default_config:
+                continue
+
         # Skip options without a value
         if option.default is None and not value:
             continue
@@ -535,9 +539,9 @@ def get_required_pip_specification() -> SpecifierSet:
     Returns pip version specifier requested by current pip-tools installation.
     """
     project_dist = get_distribution("pip-tools")
-    requirement = next(  # pragma: no branch
+    requirement = next(
         (r for r in project_dist.requires() if r.name == "pip"), None
-    )
+    )  # pragma: no branch
     assert (
         requirement is not None
     ), "'pip' is expected to be in the list of pip-tools requirements"
@@ -674,3 +678,216 @@ def parse_requirements_from_wheel_metadata(
             markers=parts.markers,
             extras=parts.extras,
         )
+
+
+def override_defaults_from_config_file(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> Path | None:
+    """
+    Overrides ``click.Command`` defaults based on specified or discovered config
+    file, returning the ``pathlib.Path`` of that config file if specified or
+    discovered.
+
+    ``None`` is returned if no such file is found.
+
+    ``pip-tools`` will use the first config file found, searching in this order:
+    an explicitly given config file, a d``.pip-tools.toml``, a ``pyproject.toml``
+    file. Those files are searched for in the same directory as the requirements
+    input file, or the current working directory if requirements come via stdin.
+    """
+    if ctx.params.get("no_config"):
+        return None
+
+    if value is None:
+        config_file = select_config_file(ctx.params.get("src_files", ()))
+        if config_file is None:
+            return None
+    else:
+        config_file = Path(value)
+
+    config = parse_config_file(ctx, config_file)
+    if config:
+        _validate_config(ctx, config)
+        _assign_config_to_cli_context(ctx, config)
+
+    return config_file
+
+
+def _assign_config_to_cli_context(
+    click_context: click.Context,
+    cli_config_mapping: dict[str, Any],
+) -> None:
+    if click_context.default_map is None:
+        click_context.default_map = {}
+
+    click_context.default_map.update(cli_config_mapping)
+
+
+def _validate_config(
+    click_context: click.Context,
+    config: dict[str, Any],
+) -> None:
+    """
+    Validate parsed config against click command params.
+
+    :raises click.NoSuchOption: if config contains unknown keys.
+    :raises click.BadOptionUsage: if config contains invalid values.
+    """
+    cli_params = {
+        param.name: param
+        for param in click_context.command.params
+        if param.name is not None
+    }
+
+    for key, value in config.items():
+        # Validate unknown keys
+        if key not in cli_params:
+            possibilities = difflib.get_close_matches(key, cli_params.keys())
+            raise click.NoSuchOption(
+                option_name=key,
+                message=f"No such config key {key!r}.",
+                possibilities=possibilities,
+                ctx=click_context,
+            )
+
+        # Validate invalid values
+        param = cli_params[key]
+        try:
+            param.type_cast_value(value=value, ctx=click_context)
+        except Exception as e:
+            raise click.BadOptionUsage(
+                option_name=key,
+                message=(
+                    f"Invalid value for config key {key!r}: {value!r}.{os.linesep}"
+                    f"Details: {e}"
+                ),
+                ctx=click_context,
+            ) from e
+
+
+def select_config_file(src_files: tuple[str, ...]) -> Path | None:
+    """
+    Returns the config file to use for defaults given ``src_files`` provided.
+    """
+    # NOTE: If no src_files were specified, consider the current directory the
+    # NOTE: only config file lookup candidate. This usually happens when a
+    # NOTE: pip-tools invocation gets its incoming requirements from standard
+    # NOTE: input.
+    working_directory = Path.cwd()
+    src_files_as_paths = (
+        (working_directory / src_file).resolve() for src_file in src_files or (".",)
+    )
+    candidate_dirs = (src if src.is_dir() else src.parent for src in src_files_as_paths)
+    config_file_path = next(
+        (
+            candidate_dir / config_file
+            for candidate_dir in candidate_dirs
+            for config_file in (CONFIG_FILE_NAME, "pyproject.toml")
+            if (candidate_dir / config_file).is_file()
+        ),
+        None,
+    )
+    if config_file_path is None:
+        return None
+
+    return (
+        config_file_path.relative_to(working_directory)
+        if is_path_relative_to(config_file_path, working_directory)
+        else config_file_path
+    )
+
+
+# Some of the defined click options have different `dest` values than the defaults
+NON_STANDARD_OPTION_DEST_MAP: dict[str, str] = {
+    "extra": "extras",
+    "upgrade_package": "upgrade_packages",
+    "resolver": "resolver_name",
+    "user": "user_only",
+    "pip_args": "pip_args_str",
+}
+
+
+def get_cli_options(ctx: click.Context) -> dict[str, click.Parameter]:
+    cli_opts = {
+        opt: option
+        for option in ctx.command.params
+        for opt in itertools.chain(option.opts, option.secondary_opts)
+        if opt.startswith("--") and option.name is not None
+    }
+    return cli_opts
+
+
+def parse_config_file(
+    click_context: click.Context, config_file: Path
+) -> dict[str, Any]:
+    try:
+        config = tomllib.loads(config_file.read_text(encoding="utf-8"))
+    except OSError as os_err:
+        raise click.FileError(
+            filename=str(config_file),
+            hint=f"Could not read '{config_file !s}': {os_err !s}",
+        )
+    except ValueError as value_err:
+        raise click.FileError(
+            filename=str(config_file),
+            hint=f"Could not parse '{config_file !s}': {value_err !s}",
+        )
+
+    # In a TOML file, we expect the config to be under `[tool.pip-tools]`
+    piptools_config: dict[str, Any] = config.get("tool", {}).get("pip-tools", {})
+    piptools_config = _normalize_keys_in_config(piptools_config)
+    piptools_config = _invert_negative_bool_options_in_config(
+        ctx=click_context,
+        config=piptools_config,
+    )
+    return piptools_config
+
+
+def _normalize_keys_in_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {_normalize_config_key(key): value for key, value in config.items()}
+
+
+def _invert_negative_bool_options_in_config(
+    ctx: click.Context, config: dict[str, Any]
+) -> dict[str, Any]:
+    new_config = {}
+    cli_opts = get_cli_options(ctx)
+
+    for key, value in config.items():
+        # Transform config key to its equivalent in the CLI
+        long_option = _convert_to_long_option(key)
+        new_key = cli_opts[long_option].name if long_option in cli_opts else key
+        assert new_key is not None
+
+        # Invert negative boolean according to the CLI
+        new_value = (
+            not value
+            if long_option.startswith("--no-")
+            and long_option not in ONLY_NEGATIVE_OPTIONS
+            and isinstance(value, bool)
+            else value
+        )
+        new_config[new_key] = new_value
+
+    return new_config
+
+
+def _normalize_config_key(key: str) -> str:
+    """Transform given ``some-key`` into ``some_key``."""
+    return key.lstrip("-").replace("-", "_").lower()
+
+
+def _convert_to_long_option(key: str) -> str:
+    """Transform given ``some-key`` into ``--some-key``."""
+    return "--" + key.lstrip("-").replace("_", "-").lower()
+
+
+def is_path_relative_to(path1: Path, path2: Path) -> bool:
+    """Return True if ``path1`` is relative to ``path2``."""
+    # TODO: remove this function in favor of Path.is_relative_to()
+    #       when we drop support for Python 3.8
+    try:
+        path1.relative_to(path2)
+    except ValueError:
+        return False
+    return True

@@ -2176,6 +2176,42 @@ def test_upgrade_package_doesnt_remove_annotation(pip_conf, runner):
         )
 
 
+@pytest.mark.parametrize(("num_inputs"), (2, 3, 10))
+def test_many_inputs_includes_all_annotations(pip_conf, runner, tmp_path, num_inputs):
+    """
+    Tests that an entry required by multiple input files is attributed to all of them in the
+    annotation.
+    See: https://github.com/jazzband/pip-tools/issues/1853
+    """
+    req_ins = [tmp_path / f"requirements{n:02d}.in" for n in range(num_inputs)]
+    for req_in in req_ins:
+        req_in.write_text("small-fake-a==0.1\n")
+
+    out = runner.invoke(
+        cli,
+        [
+            "--output-file",
+            "-",
+            "--quiet",
+            "--no-header",
+            "--no-emit-find-links",
+        ]
+        + [str(r) for r in req_ins],
+    )
+    assert out.exit_code == 0, out.stderr
+    assert (
+        out.stdout
+        == "\n".join(
+            [
+                "small-fake-a==0.1",
+                "    # via",
+            ]
+            + [f"    #   -r {os.path.relpath(req_in)}" for req_in in req_ins]
+        )
+        + "\n"
+    )
+
+
 @pytest.mark.parametrize(
     "options",
     (
@@ -3205,3 +3241,96 @@ small-fake-b==0.3
 """
     assert out.exit_code == 0
     assert expected == out.stderr
+
+
+def test_config_option(pip_conf, runner, tmp_path, make_config_file):
+    config_file = make_config_file("dry-run", True)
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 0
+    assert "Dry-run, so nothing updated" in out.stderr
+
+
+def test_no_config_option_overrides_config_with_defaults(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    config_file = make_config_file("dry-run", True)
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(
+        cli, [req_in.as_posix(), "--no-config", "--config", config_file.as_posix()]
+    )
+
+    assert out.exit_code == 0
+    assert "Dry-run, so nothing updated" not in out.stderr
+
+
+def test_raise_error_on_unknown_config_option(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    config_file = make_config_file("unknown-option", True)
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 2
+    assert "No such config key 'unknown_option'" in out.stderr
+
+
+def test_raise_error_on_invalid_config_option(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    config_file = make_config_file("dry-run", ["invalid", "value"])
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 2
+    assert "Invalid value for config key 'dry_run': ['invalid', 'value']" in out.stderr
+
+
+def test_cli_boolean_flag_config_option_has_valid_context(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    config_file = make_config_file("no-annotate", True)
+
+    req_in = tmp_path / "requirements.in"
+    req_in.write_text("small-fake-a==0.1")
+    out = runner.invoke(
+        cli,
+        [
+            req_in.as_posix(),
+            "--config",
+            config_file.as_posix(),
+            "--no-emit-options",
+            "--no-header",
+            "--output-file",
+            "-",
+        ],
+    )
+    assert out.exit_code == 0
+    assert out.stdout == "small-fake-a==0.1\n"
+
+
+def test_invalid_cli_boolean_flag_config_option_captured(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    config_file = make_config_file("no-annnotate", True)
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 2
+    assert "No such config key 'no_annnotate'." in out.stderr

@@ -5,6 +5,7 @@ import os
 import shlex
 import sys
 import tempfile
+from pathlib import Path
 from typing import IO, Any, BinaryIO, cast
 
 import click
@@ -19,7 +20,7 @@ from pip._internal.utils.misc import redact_auth_from_url
 from .._compat import parse_requirements
 from ..cache import DependencyCache
 from ..exceptions import NoCandidateFound, PipToolsError
-from ..locations import CACHE_DIR
+from ..locations import CACHE_DIR, CONFIG_FILE_NAME
 from ..logging import log
 from ..repositories import LocalRequirementsRepository, PyPIRepository
 from ..repositories.base import BaseRepository
@@ -30,6 +31,7 @@ from ..utils import (
     drop_extras,
     is_pinned_requirement,
     key_from_ireq,
+    override_defaults_from_config_file,
     parse_requirements_from_wheel_metadata,
     working_dir,
 )
@@ -299,7 +301,7 @@ def _determine_linesep(
     "--resolver",
     "resolver_name",
     type=click.Choice(("legacy", "backtracking")),
-    default="legacy",
+    default="backtracking",
     envvar="PIP_TOOLS_RESOLVER",
     help="Choose the dependency resolver.",
 )
@@ -320,6 +322,28 @@ def _determine_linesep(
     multiple=True,
     help="Specify a package to consider unsafe; may be used more than once. "
     f"Replaces default unsafe packages: {', '.join(sorted(UNSAFE_PACKAGES))}",
+)
+@click.option(
+    "--config",
+    type=click.Path(
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        allow_dash=False,
+        path_type=str,
+    ),
+    help=f"Read configuration from TOML file. By default, looks for a {CONFIG_FILE_NAME} or "
+    "pyproject.toml.",
+    is_eager=True,
+    callback=override_defaults_from_config_file,
+)
+@click.option(
+    "--no-config",
+    is_flag=True,
+    default=False,
+    help="Do not read any config file.",
+    is_eager=True,
 )
 def cli(
     ctx: click.Context,
@@ -361,6 +385,8 @@ def cli(
     emit_index_url: bool,
     emit_options: bool,
     unsafe_package: tuple[str, ...],
+    config: Path | None,
+    no_config: bool,
 ) -> None:
     """
     Compiles requirements.txt from requirements.in, pyproject.toml, setup.cfg,
@@ -413,12 +439,13 @@ def cli(
             f"input and output filenames must not be matched: {output_file.name}"
         )
 
+    if config:
+        log.debug(f"Using pip-tools configuration defaults found in '{config !s}'.")
+
     if resolver_name == "legacy":
         log.warning(
             "WARNING: the legacy dependency resolver is deprecated and will be removed"
-            " in future versions of pip-tools. The default resolver will be changed to"
-            " 'backtracking' in pip-tools 7.0.0. Specify --resolver=backtracking to"
-            " silence this warning."
+            " in future versions of pip-tools."
         )
 
     ###
