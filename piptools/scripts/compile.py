@@ -20,7 +20,7 @@ from pip._internal.utils.misc import redact_auth_from_url
 from .._compat import parse_requirements
 from ..cache import DependencyCache
 from ..exceptions import NoCandidateFound, PipToolsError
-from ..locations import CACHE_DIR, CONFIG_FILE_NAME
+from ..locations import CACHE_DIR, DEFAULT_CONFIG_FILE_NAMES
 from ..logging import log
 from ..repositories import LocalRequirementsRepository, PyPIRepository
 from ..repositories.base import BaseRepository
@@ -245,9 +245,9 @@ def _determine_linesep(
     ),
 )
 @click.option(
-    "--strip-extras",
+    "--strip-extras/--no-strip-extras",
     is_flag=True,
-    default=False,
+    default=None,
     help="Assure output file is constraints compatible, avoiding use of extras.",
 )
 @click.option(
@@ -333,8 +333,10 @@ def _determine_linesep(
         allow_dash=False,
         path_type=str,
     ),
-    help=f"Read configuration from TOML file. By default, looks for a {CONFIG_FILE_NAME} or "
-    "pyproject.toml.",
+    help=(
+        f"Read configuration from TOML file. By default, looks for the following "
+        f"files in the given order: {', '.join(DEFAULT_CONFIG_FILE_NAMES)}."
+    ),
     is_eager=True,
     callback=override_defaults_from_config_file,
 )
@@ -344,6 +346,20 @@ def _determine_linesep(
     default=False,
     help="Do not read any config file.",
     is_eager=True,
+)
+@click.option(
+    "-c",
+    "--constraint",
+    type=click.Path(
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        allow_dash=False,
+        path_type=str,
+    ),
+    multiple=True,
+    help="Constrain versions using the given constraints file; may be used more than once.",
 )
 def cli(
     ctx: click.Context,
@@ -372,7 +388,7 @@ def cli(
     read_relative_to_input: bool,
     newline: str,
     allow_unsafe: bool,
-    strip_extras: bool,
+    strip_extras: bool | None,
     generate_hashes: bool,
     reuse_hashes: bool,
     src_files: tuple[str, ...],
@@ -387,6 +403,7 @@ def cli(
     unsafe_package: tuple[str, ...],
     config: Path | None,
     no_config: bool,
+    constraint: tuple[str, ...],
 ) -> None:
     """
     Compiles requirements.txt from requirements.in, pyproject.toml, setup.cfg,
@@ -595,6 +612,18 @@ def cli(
                 )
             )
 
+    # Parse all constraints from `--constraint` files
+    for filename in constraint:
+        constraints.extend(
+            parse_requirements(
+                filename,
+                constraint=True,
+                finder=repository.finder,
+                options=repository.options,
+                session=repository.session,
+            )
+        )
+
     if upgrade_packages:
         constraints_file = tempfile.NamedTemporaryFile(mode="wt", delete=False)
         constraints_file.write("\n".join(upgrade_packages))
@@ -682,6 +711,15 @@ def cli(
     linesep = _determine_linesep(
         strategy=newline, filenames=(output_file.name, *src_files)
     )
+
+    if strip_extras is None:
+        strip_extras = False
+        log.warning(
+            "WARNING: --strip-extras is becoming the default "
+            "in version 8.0.0. To silence this warning, "
+            "either use --strip-extras to opt into the new default "
+            "or use --no-strip-extras to retain the existing behavior."
+        )
 
     ##
     # Output

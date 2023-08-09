@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, TypeVar, cast
 
+from click.core import ParameterSource
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -36,7 +38,7 @@ from pip._vendor.packaging.version import Version
 from pip._vendor.packaging.version import parse as parse_version
 from pip._vendor.pkg_resources import get_distribution
 
-from piptools.locations import CONFIG_FILE_NAME
+from piptools.locations import DEFAULT_CONFIG_FILE_NAMES
 from piptools.subprocess_utils import run_python_snippet
 
 if TYPE_CHECKING:
@@ -487,8 +489,11 @@ def get_compile_command(click_ctx: click.Context) -> str:
 
         # Exclude config option if it's the default one
         if option_long_name == "--config":
-            default_config = select_config_file(click_ctx.params.get("src_files", ()))
-            if value == default_config:
+            parameter_source = click_ctx.get_parameter_source(option_name)
+            if (
+                str(value) in DEFAULT_CONFIG_FILE_NAMES
+                or parameter_source == ParameterSource.DEFAULT
+            ):
                 continue
 
         # Skip options without a value
@@ -658,7 +663,6 @@ def parse_requirements_from_wheel_metadata(
     else:
         with working_dir(output_dir):
             comes_from = f"{package_name} ({os.path.relpath(src_file)})"
-        comes_from = f"{package_name} ({src_file})"
 
     for req in metadata.get_all("Requires-Dist") or []:
         parts = parse_req_from_line(req, comes_from)
@@ -733,16 +737,23 @@ def _validate_config(
     :raises click.NoSuchOption: if config contains unknown keys.
     :raises click.BadOptionUsage: if config contains invalid values.
     """
-    cli_params = {
-        param.name: param
-        for param in click_context.command.params
-        if param.name is not None
+    from piptools.scripts.compile import cli as compile_cli
+    from piptools.scripts.sync import cli as sync_cli
+
+    compile_cli_params = {
+        param.name: param for param in compile_cli.params if param.name is not None
     }
 
+    sync_cli_params = {
+        param.name: param for param in sync_cli.params if param.name is not None
+    }
+
+    all_keys = set(compile_cli_params) | set(sync_cli_params)
+
     for key, value in config.items():
-        # Validate unknown keys
-        if key not in cli_params:
-            possibilities = difflib.get_close_matches(key, cli_params.keys())
+        # Validate unknown keys in both compile and sync
+        if key not in all_keys:
+            possibilities = difflib.get_close_matches(key, all_keys)
             raise click.NoSuchOption(
                 option_name=key,
                 message=f"No such config key {key!r}.",
@@ -750,19 +761,26 @@ def _validate_config(
                 ctx=click_context,
             )
 
-        # Validate invalid values
-        param = cli_params[key]
-        try:
-            param.type_cast_value(value=value, ctx=click_context)
-        except Exception as e:
-            raise click.BadOptionUsage(
-                option_name=key,
-                message=(
-                    f"Invalid value for config key {key!r}: {value!r}.{os.linesep}"
-                    f"Details: {e}"
-                ),
-                ctx=click_context,
-            ) from e
+        # Get all params associated with this key in both compile and sync
+        associated_params = (
+            cli_params[key]
+            for cli_params in (compile_cli_params, sync_cli_params)
+            if key in cli_params
+        )
+
+        # Validate value against types of all associated params
+        for param in associated_params:
+            try:
+                param.type_cast_value(value=value, ctx=click_context)
+            except Exception as e:
+                raise click.BadOptionUsage(
+                    option_name=key,
+                    message=(
+                        f"Invalid value for config key {key!r}: {value!r}.{os.linesep}"
+                        f"Details: {e}"
+                    ),
+                    ctx=click_context,
+                ) from e
 
 
 def select_config_file(src_files: tuple[str, ...]) -> Path | None:
@@ -782,7 +800,7 @@ def select_config_file(src_files: tuple[str, ...]) -> Path | None:
         (
             candidate_dir / config_file
             for candidate_dir in candidate_dirs
-            for config_file in (CONFIG_FILE_NAME, "pyproject.toml")
+            for config_file in DEFAULT_CONFIG_FILE_NAMES
             if (candidate_dir / config_file).is_file()
         ),
         None,
@@ -795,16 +813,6 @@ def select_config_file(src_files: tuple[str, ...]) -> Path | None:
         if is_path_relative_to(config_file_path, working_directory)
         else config_file_path
     )
-
-
-# Some of the defined click options have different `dest` values than the defaults
-NON_STANDARD_OPTION_DEST_MAP: dict[str, str] = {
-    "extra": "extras",
-    "upgrade_package": "upgrade_packages",
-    "resolver": "resolver_name",
-    "user": "user_only",
-    "pip_args": "pip_args_str",
-}
 
 
 def get_cli_options(ctx: click.Context) -> dict[str, click.Parameter]:

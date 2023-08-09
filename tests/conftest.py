@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from textwrap import dedent
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import tomli_w
@@ -31,7 +31,7 @@ from pip._vendor.pkg_resources import Requirement
 from piptools._compat import PIP_VERSION, Distribution
 from piptools.cache import DependencyCache
 from piptools.exceptions import NoCandidateFound
-from piptools.locations import CONFIG_FILE_NAME
+from piptools.locations import DEFAULT_CONFIG_FILE_NAMES
 from piptools.logging import log
 from piptools.repositories import PyPIRepository
 from piptools.repositories.base import BaseRepository
@@ -234,7 +234,7 @@ def runner():
 @pytest.fixture
 def tmpdir_cwd(tmpdir):
     with tmpdir.as_cwd():
-        yield tmpdir
+        yield Path(tmpdir)
 
 
 @pytest.fixture
@@ -452,15 +452,18 @@ def make_config_file(tmpdir_cwd):
     """
 
     def _maker(
-        pyproject_param: str, new_default: Any, config_file_name: str = CONFIG_FILE_NAME
+        pyproject_param: str,
+        new_default: Any,
+        config_file_name: str = DEFAULT_CONFIG_FILE_NAMES[0],
     ) -> Path:
-        # Make a config file with this one config default override
-        config_path = Path(tmpdir_cwd) / pyproject_param
-        config_file = config_path / config_file_name
-        config_path.mkdir(exist_ok=True)
+        # Create a nested directory structure if config_file_name includes directories
+        config_dir = (tmpdir_cwd / config_file_name).parent
+        config_dir.mkdir(exist_ok=True, parents=True)
 
+        # Make a config file with this one config default override
+        config_file = tmpdir_cwd / config_file_name
         config_to_dump = {"tool": {"pip-tools": {pyproject_param: new_default}}}
         config_file.write_text(tomli_w.dumps(config_to_dump))
-        return config_file.relative_to(tmpdir_cwd)
+        return cast(Path, config_file.relative_to(tmpdir_cwd))
 
     return _maker

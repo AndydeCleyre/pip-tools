@@ -3227,12 +3227,14 @@ def test_compile_recursive_extras(runner, tmp_path, current_resolver):
         [
             "--no-header",
             "--no-annotate",
-            "--no-emit-find-links",
+            "--no-emit-options",
             "--extra",
             "dev",
             "--find-links",
             os.fspath(MINIMAL_WHEELS_PATH),
             os.fspath(tmp_path / "pyproject.toml"),
+            "--output-file",
+            "-",
         ],
     )
     expected = rf"""foo[footest] @ {tmp_path.as_uri()}
@@ -3240,7 +3242,7 @@ small-fake-a==0.2
 small-fake-b==0.3
 """
     assert out.exit_code == 0
-    assert expected == out.stderr
+    assert expected == out.stdout
 
 
 def test_config_option(pip_conf, runner, tmp_path, make_config_file):
@@ -3250,6 +3252,18 @@ def test_config_option(pip_conf, runner, tmp_path, make_config_file):
     req_in.touch()
 
     out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 0
+    assert "Dry-run, so nothing updated" in out.stderr
+
+
+def test_default_config_option(pip_conf, runner, make_config_file, tmpdir_cwd):
+    make_config_file("dry-run", True)
+
+    req_in = tmpdir_cwd / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli)
 
     assert out.exit_code == 0
     assert "Dry-run, so nothing updated" in out.stderr
@@ -3299,6 +3313,52 @@ def test_raise_error_on_invalid_config_option(
     assert "Invalid value for config key 'dry_run': ['invalid', 'value']" in out.stderr
 
 
+@pytest.mark.parametrize("option", ("-c", "--constraint"))
+def test_constraint_option(pip_conf, runner, tmpdir_cwd, make_config_file, option):
+    req_in = tmpdir_cwd / "requirements.in"
+    req_in.write_text("small-fake-a")
+
+    constraints_txt = tmpdir_cwd / "constraints.txt"
+    constraints_txt.write_text("small-fake-a==0.1")
+
+    out = runner.invoke(
+        cli,
+        [
+            req_in.name,
+            option,
+            constraints_txt.name,
+            "--output-file",
+            "-",
+            "--no-header",
+            "--no-emit-options",
+        ],
+    )
+
+    assert out.exit_code == 0
+    assert out.stdout == dedent(
+        """\
+        small-fake-a==0.1
+            # via
+            #   -c constraints.txt
+            #   -r requirements.in
+        """
+    )
+
+
+def test_allow_in_config_pip_sync_option(pip_conf, runner, tmp_path, make_config_file):
+    config_file = make_config_file("--ask", True)  # pip-sync's option
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(
+        cli, [req_in.as_posix(), "--verbose", "--config", config_file.as_posix()]
+    )
+
+    assert out.exit_code == 0
+    assert "Using pip-tools configuration defaults found" in out.stderr
+
+
 def test_cli_boolean_flag_config_option_has_valid_context(
     pip_conf, runner, tmp_path, make_config_file
 ):
@@ -3334,3 +3394,33 @@ def test_invalid_cli_boolean_flag_config_option_captured(
 
     assert out.exit_code == 2
     assert "No such config key 'no_annnotate'." in out.stderr
+
+
+strip_extras_warning = (
+    "WARNING: --strip-extras is becoming the default in version 8.0.0."
+)
+
+
+def test_show_warning_on_default_strip_extras_option(
+    runner, make_package, make_sdist, tmp_path
+):
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, req_in.as_posix())
+
+    assert out.exit_code == 0
+    assert strip_extras_warning in out.stderr
+
+
+@pytest.mark.parametrize("option", ("--strip-extras", "--no-strip-extras"))
+def test_do_not_show_warning_on_explicit_strip_extras_option(
+    runner, make_package, make_sdist, tmp_path, option
+):
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [option, req_in.as_posix()])
+
+    assert out.exit_code == 0
+    assert strip_extras_warning not in out.stderr
