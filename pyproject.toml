@@ -36,7 +36,8 @@ classifiers = [
 keywords = ["pip", "requirements", "packaging"]
 dependencies = [
   # direct dependencies
-  "build",
+  "build >= 1.0.0",
+  "pyproject_hooks",
   "click >= 8",
   "pip >= 22.2",
   "tomli; python_version < '3.11'",
@@ -94,11 +95,15 @@ exclude = "^tests/test_data/"
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+disallow_incomplete_defs = false
 
 [tool.pytest.ini_options]
 addopts = [
   # `pytest-xdist`:
   "--numprocesses=auto",
+
+  # The `worksteal` distribution method is useful if the run times of different tests vary greatly,
+  # as it ensures more efficient resource usage, improving the performance of testing.
   "--dist=worksteal",
 
   # Show 20 slowest invocations:

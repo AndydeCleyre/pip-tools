@@ -27,6 +27,7 @@ from click.utils import LazyFile
 from pip._internal.models.link import Link
 from pip._internal.req import InstallRequirement
 from pip._internal.req.constructors import install_req_from_line, parse_req_from_line
+from pip._internal.resolution.resolvelib.base import Requirement as PipRequirement
 from pip._internal.utils.misc import redact_auth_from_url
 from pip._internal.utils.urls import path_to_url, url_to_path
 from pip._internal.vcs import is_url
@@ -82,8 +83,20 @@ def key_from_ireq(ireq: InstallRequirement) -> str:
         return key_from_req(ireq.req)
 
 
-def key_from_req(req: InstallRequirement | Requirement) -> str:
-    """Get an all-lowercase version of the requirement's name."""
+def key_from_req(req: InstallRequirement | Requirement | PipRequirement) -> str:
+    """
+    Get an all-lowercase version of the requirement's name.
+
+    **Note:** If the argument is an instance of
+    ``pip._internal.resolution.resolvelib.base.Requirement`` (like
+    ``pip._internal.resolution.resolvelib.requirements.SpecifierRequirement``),
+    then the name might include an extras specification.
+    Apply :py:func:`strip_extras` to the result of this function if you need
+    the package name only.
+
+    :param req: the requirement the key is computed for
+    :return: the canonical name of the requirement
+    """
     return str(canonicalize_name(req.name))
 
 

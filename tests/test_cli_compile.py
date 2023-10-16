@@ -12,9 +12,14 @@ from unittest import mock
 import pytest
 from pip._internal.utils.hashes import FAVORITE_HASH
 from pip._internal.utils.urls import path_to_url
+from pip._vendor.packaging.version import Version
 
 from piptools.scripts.compile import cli
-from piptools.utils import COMPILE_EXCLUDE_OPTIONS, working_dir
+from piptools.utils import (
+    COMPILE_EXCLUDE_OPTIONS,
+    get_pip_version_for_python_executable,
+    working_dir,
+)
 
 from .constants import MINIMAL_WHEELS_PATH, PACKAGES_PATH
 
@@ -2846,6 +2851,40 @@ def test_input_formats(fake_dists, runner, make_module, fname, content):
     assert "extra ==" not in out.stderr
 
 
+@pytest.mark.parametrize("verbose_option", (True, False))
+def test_error_in_pyproject_toml(
+    fake_dists, runner, make_module, capfd, verbose_option
+):
+    """
+    Test that an error in pyproject.toml is reported.
+    """
+    fname = "pyproject.toml"
+    invalid_content = dedent(
+        """\
+        [project]
+        invalid = "metadata"
+        """
+    )
+    meta_path = make_module(fname=fname, content=invalid_content)
+
+    options = []
+    if verbose_option:
+        options = ["--verbose"]
+
+    options.extend(
+        ["-n", "--no-build-isolation", "--find-links", fake_dists, meta_path]
+    )
+
+    out = runner.invoke(cli, options)
+
+    assert out.exit_code == 2, out.stderr
+    captured = capfd.readouterr()
+
+    assert (
+        "`project` must contain ['name'] properties" in captured.err
+    ) is verbose_option
+
+
 @pytest.mark.network
 @pytest.mark.parametrize(("fname", "content"), METADATA_TEST_CASES)
 def test_one_extra(fake_dists, runner, make_module, fname, content):
@@ -3003,6 +3042,139 @@ def test_cli_compile_strip_extras(runner, make_package, make_sdist, tmpdir):
     assert out.exit_code == 0, out
     assert "test-package-2==0.1" in out.stderr
     assert "[more]" not in out.stderr
+
+
+@pytest.mark.parametrize(
+    ("package_specs", "constraints", "existing_reqs", "expected_reqs"),
+    (
+        (
+            [
+                {
+                    "name": "test_package_1",
+                    "version": "1.1",
+                    "install_requires": ["test_package_2 ~= 1.1"],
+                },
+                {
+                    "name": "test_package_2",
+                    "version": "1.1",
+                    "extras_require": {"more": "test_package_3"},
+                },
+            ],
+            """
+            test_package_1 == 1.1
+            """,
+            """
+            test_package_1 == 1.0
+            test_package_2 == 1.0
+            """,
+            """
+            test-package-1==1.1
+            test-package-2==1.1
+            """,
+        ),
+        (
+            [
+                {
+                    "name": "test_package_1",
+                    "version": "1.1",
+                    "install_requires": ["test_package_2[more] ~= 1.1"],
+                },
+                {
+                    "name": "test_package_2",
+                    "version": "1.1",
+                    "extras_require": {"more": "test_package_3"},
+                },
+                {
+                    "name": "test_package_3",
+                    "version": "0.1",
+                },
+            ],
+            """
+            test_package_1 == 1.1
+            """,
+            """
+            test_package_1 == 1.0
+            test_package_2 == 1.0
+            test_package_3 == 0.1
+            """,
+            """
+            test-package-1==1.1
+            test-package-2==1.1
+            test-package-3==0.1
+            """,
+        ),
+        (
+            [
+                {
+                    "name": "test_package_1",
+                    "version": "1.1",
+                    "install_requires": ["test_package_2[more] ~= 1.1"],
+                },
+                {
+                    "name": "test_package_2",
+                    "version": "1.1",
+                    "extras_require": {"more": "test_package_3"},
+                },
+                {
+                    "name": "test_package_3",
+                    "version": "0.1",
+                },
+            ],
+            """
+            test_package_1 == 1.1
+            """,
+            """
+            test_package_1 == 1.0
+            test_package_2[more] == 1.0
+            test_package_3 == 0.1
+            """,
+            """
+            test-package-1==1.1
+            test-package-2==1.1
+            test-package-3==0.1
+            """,
+        ),
+    ),
+    ids=("no-extra", "extra-stripped-from-existing", "with-extra-in-existing"),
+)
+def test_resolver_drops_existing_conflicting_constraint(
+    runner,
+    make_package,
+    make_sdist,
+    tmpdir,
+    package_specs,
+    constraints,
+    existing_reqs,
+    expected_reqs,
+) -> None:
+    """
+    Test that the resolver will find a solution even if some of the existing
+    (indirect) requirements are incompatible with the new constraints.
+
+    This must succeed even if the conflicting requirement includes some extra,
+    no matter whether the extra is mentioned in the existing requirements
+    or not (cf. `issue #1977 <https://github.com/jazzband/pip-tools/issues/1977>`_).
+    """
+    expected_requirements = {line.strip() for line in expected_reqs.splitlines()}
+    dists_dir = tmpdir / "dists"
+
+    packages = [make_package(**spec) for spec in package_specs]
+    for pkg in packages:
+        make_sdist(pkg, dists_dir)
+
+    with open("requirements.txt", "w") as existing_reqs_out:
+        existing_reqs_out.write(dedent(existing_reqs))
+
+    with open("requirements.in", "w") as constraints_out:
+        constraints_out.write(dedent(constraints))
+
+    out = runner.invoke(cli, ["--strip-extras", "--find-links", str(dists_dir)])
+
+    assert out.exit_code == 0, out
+
+    with open("requirements.txt") as req_txt:
+        req_txt_content = req_txt.read()
+        assert expected_requirements.issubset(req_txt_content.splitlines())
 
 
 def test_resolution_failure(runner):
@@ -3168,7 +3340,14 @@ def test_pass_pip_cache_to_pip_args(tmpdir, runner, current_resolver):
         cli, ["--cache-dir", str(cache_dir), "--resolver", current_resolver]
     )
     assert out.exit_code == 0
-    assert os.listdir(os.path.join(str(cache_dir), "http"))
+    # TODO: Remove hack once testing only on v23.3+
+    pip_current_version = get_pip_version_for_python_executable(sys.executable)
+    pip_breaking_version = Version("23.3.dev0")
+    if pip_current_version >= pip_breaking_version:
+        pip_http_cache_dir = "http-v2"
+    else:
+        pip_http_cache_dir = "http"
+    assert os.listdir(os.path.join(str(cache_dir), pip_http_cache_dir))
 
 
 @backtracking_resolver_only

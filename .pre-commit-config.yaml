@@ -20,7 +20,7 @@ repos:
         additional_dependencies:
           - flake8-pytest-style
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.5.0
+    rev: v1.5.1
     hooks:
       - id: mypy
         # Avoid error: Duplicate module named 'setup'
@@ -32,7 +32,9 @@ repos:
           - pep517==0.10.0
           - toml==0.10.2
           - pip==20.3.4
-          - build==0.9.0
+          - build==1.0.0
+          - pyproject_hooks==1.0.0
+          - pytest==7.4.2
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.5
     hooks:
@@ -40,7 +42,7 @@ repos:
         args: [--ini, .bandit]
         exclude: ^tests/
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.0.1
+    rev: v3.0.3
     hooks:
       - id: prettier
         additional_dependencies:
