@@ -12,7 +12,7 @@ import shlex
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, TypeVar, cast
+from typing import Any, Callable, Iterable, Iterator, TypeVar, cast
 
 from click.core import ParameterSource
 
@@ -26,7 +26,7 @@ import pip
 from click.utils import LazyFile
 from pip._internal.models.link import Link
 from pip._internal.req import InstallRequirement
-from pip._internal.req.constructors import install_req_from_line, parse_req_from_line
+from pip._internal.req.constructors import install_req_from_line
 from pip._internal.resolution.resolvelib.base import Requirement as PipRequirement
 from pip._internal.utils.misc import redact_auth_from_url
 from pip._internal.utils.urls import path_to_url, url_to_path
@@ -41,11 +41,6 @@ from pip._vendor.pkg_resources import get_distribution
 
 from piptools.locations import DEFAULT_CONFIG_FILE_NAMES
 from piptools.subprocess_utils import run_python_snippet
-
-if TYPE_CHECKING:
-    from typing import Protocol
-else:
-    Protocol = object
 
 # piptools._compat imports from here, so this would become circular:
 # from piptools._compat import PIP_VERSION
@@ -660,41 +655,6 @@ def copy_install_requirement(
             setattr(ireq, custom_attr, getattr(template, custom_attr))
 
     return ireq
-
-
-class PackageMetadata(Protocol):
-    def get_all(self, name: str, failobj: _T = ...) -> list[str] | _T:
-        ...
-
-
-def parse_requirements_from_wheel_metadata(
-    metadata: PackageMetadata, src_file: str, output_dir: str | None
-) -> Iterator[InstallRequirement]:
-    package_name = metadata.get_all("Name")[0]
-    if not output_dir:
-        comes_from = f"{package_name} ({src_file})"
-    else:
-        with working_dir(output_dir):
-            comes_from = f"{package_name} ({os.path.relpath(src_file)})"
-
-    for req in metadata.get_all("Requires-Dist") or []:
-        parts = parse_req_from_line(req, comes_from)
-        if parts.requirement.name == package_name:
-            package_dir = os.path.dirname(os.path.abspath(src_file))
-            # Replace package name with package directory in the requirement
-            # string so that pip can find the package as self-referential.
-            # Note the string can contain extras, so we need to replace only
-            # the package name, not the whole string.
-            replaced_package_name = req.replace(package_name, package_dir, 1)
-            parts = parse_req_from_line(replaced_package_name, comes_from)
-
-        yield InstallRequirement(
-            parts.requirement,
-            comes_from,
-            link=parts.link,
-            markers=parts.markers,
-            extras=parts.extras,
-        )
 
 
 def override_defaults_from_config_file(
