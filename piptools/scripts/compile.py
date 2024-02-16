@@ -68,9 +68,13 @@ def _determine_linesep(
     }[strategy]
 
 
-@click.command(context_settings={"help_option_names": options.help_option_names})
+@click.command(
+    name="pip-compile",
+    context_settings={"help_option_names": options.help_option_names},
+)
 @click.pass_context
 @options.version
+@options.color
 @options.verbose
 @options.quiet
 @options.dry_run
@@ -117,6 +121,7 @@ def _determine_linesep(
 @options.only_build_deps
 def cli(
     ctx: click.Context,
+    color: bool | None,
     verbose: int,
     quiet: int,
     dry_run: bool,
@@ -166,7 +171,15 @@ def cli(
     Compiles requirements.txt from requirements.in, pyproject.toml, setup.cfg,
     or setup.py specs.
     """
+    if color is not None:
+        ctx.color = color
     log.verbosity = verbose - quiet
+
+    # If ``src-files` was not provided as an input, but rather as config,
+    # it will be part of the click context ``ctx``.
+    # However, if ``src_files`` is specified, then we want to use that.
+    if not src_files and ctx.default_map and "src_files" in ctx.default_map:
+        src_files = ctx.default_map["src_files"]
 
     if all_build_deps and build_deps_targets:
         raise click.BadParameter(

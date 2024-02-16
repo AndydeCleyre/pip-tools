@@ -3725,6 +3725,42 @@ def test_allow_in_config_pip_sync_option(pip_conf, runner, tmp_path, make_config
     assert "Using pip-tools configuration defaults found" in out.stderr
 
 
+def test_use_src_files_from_config_if_option_is_not_specified_from_cli(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    foo_in = tmp_path / "foo.in"
+    req_in = tmp_path / "requirements.in"
+
+    config_file = make_config_file("src-files", [foo_in.as_posix()])
+
+    req_in.write_text("small-fake-a==0.1", encoding="utf-8")
+    foo_in.write_text("small-fake-b==0.1", encoding="utf-8")
+
+    out = runner.invoke(cli, ["--config", config_file.as_posix()])
+
+    assert out.exit_code == 0, out
+    assert "small-fake-b" in out.stderr
+    assert "small-fake-a" not in out.stderr
+
+
+def test_use_src_files_from_cli_if_option_is_specified_in_both_config_and_cli(
+    pip_conf, runner, tmp_path, make_config_file
+):
+    foo_in = tmp_path / "foo.in"
+    req_in = tmp_path / "requirements.in"
+
+    config_file = make_config_file("src-files", [foo_in.as_posix()])
+
+    req_in.write_text("small-fake-a==0.1", encoding="utf-8")
+    foo_in.write_text("small-fake-b==0.1", encoding="utf-8")
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 0, out
+    assert "small-fake-a" in out.stderr
+    assert "small-fake-b" not in out.stderr
+
+
 def test_cli_boolean_flag_config_option_has_valid_context(
     pip_conf, runner, tmp_path, make_config_file
 ):
@@ -3841,3 +3877,40 @@ def test_origin_of_extra_requirement_not_written_to_annotations(
         )
         == out.stdout
     )
+
+
+def test_tool_specific_config_option(pip_conf, runner, tmp_path, make_config_file):
+    config_file = make_config_file(
+        "dry-run", True, section="pip-tools", subsection="compile"
+    )
+
+    req_in = tmp_path / "requirements.in"
+    req_in.touch()
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--config", config_file.as_posix()])
+
+    assert out.exit_code == 0
+    assert "Dry-run, so nothing updated" in out.stderr
+
+
+@pytest.mark.xfail(reason="https://github.com/jazzband/pip-tools/issues/2012")
+@mock.patch("piptools.scripts.compile.parse_requirements")
+def test_stdout_should_not_be_read_when_stdin_is_not_a_plain_file(
+    parse_req,
+    runner,
+    tmp_path,
+):
+    parse_req.side_effect = lambda fname, finder, options, session: pytest.fail(
+        "Must not be called when output is a fifo"
+    )
+
+    req_in = tmp_path / "requirements.txt"
+    req_in.touch()
+
+    fifo = tmp_path / "fifo"
+
+    os.mkfifo(fifo)
+
+    out = runner.invoke(cli, [req_in.as_posix(), "--output-file", fifo.as_posix()])
+
+    assert out.exit_code == 0, out
