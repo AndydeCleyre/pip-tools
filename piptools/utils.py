@@ -26,7 +26,9 @@ import pip
 from click.utils import LazyFile
 from pip._internal.models.link import Link
 from pip._internal.req import InstallRequirement
-from pip._internal.req.constructors import install_req_from_line
+from pip._internal.req.constructors import (
+    install_req_from_line as _install_req_from_line,
+)
 from pip._internal.resolution.resolvelib.base import Requirement as PipRequirement
 from pip._internal.utils.misc import redact_auth_from_url
 from pip._internal.utils.urls import path_to_url, url_to_path
@@ -42,16 +44,12 @@ from pip._vendor.pkg_resources import get_distribution
 from piptools.locations import DEFAULT_CONFIG_FILE_NAMES
 from piptools.subprocess_utils import run_python_snippet
 
-# piptools._compat imports from here, so this would become circular:
-# from piptools._compat import PIP_VERSION
-# instead:
-PIP_VERSION = tuple(map(int, parse_version(pip.__version__).base_version.split(".")))
-
-
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
 _T = TypeVar("_T")
 _S = TypeVar("_S")
+
+PIP_VERSION = tuple(map(int, parse_version(pip.__version__).base_version.split(".")))
 
 UNSAFE_PACKAGES = {"setuptools", "distribute", "pip"}
 COMPILE_EXCLUDE_OPTIONS = {
@@ -99,6 +97,10 @@ def comment(text: str) -> str:
     return click.style(text, fg="green")
 
 
+def install_req_from_line(*args: Any, **kwargs: Any) -> InstallRequirement:
+    return copy_install_requirement(_install_req_from_line(*args, **kwargs))
+
+
 def make_install_requirement(
     name: str, version: str | Version, ireq: InstallRequirement
 ) -> InstallRequirement:
@@ -144,6 +146,9 @@ def fragment_string(ireq: InstallRequirement, omit_egg: bool = False) -> str:
     fragment = re.sub(r"\[[^\]]+\]$", "", fragment).lstrip("#")
     if fragment:
         fragment = f"#{fragment}"
+    # TO CHECK: are hashes already handled? [relpath branch]
+    # from main branch:
+    # fragments.append(f"{ireq.link.hash_name}={ireq.link.hash}")
     return fragment
 
 
@@ -646,6 +651,10 @@ def copy_install_requirement(
                 kwargs["link"]._parsed_url.fragment.rsplit("[", 1)[-1][:-1].split(","),
             )
         )
+
+    kwargs["extras"] = set(map(canonicalize_name, kwargs["extras"]))
+    if kwargs["req"]:
+        kwargs["req"].extras = set(kwargs["extras"])
 
     ireq = InstallRequirement(**kwargs)
 
