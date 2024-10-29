@@ -69,15 +69,6 @@ class Distribution:
         return cls(dist._dist.name, dist._dist.version, requires, dist.direct_url)
 
 
-class FileLink(Link):  # type: ignore[misc]
-    _url: str
-
-    @property
-    def file_path(self) -> str:
-        # overriding the actual property to bypass some validation
-        return self._url
-
-
 def parse_requirements(
     filename: str,
     session: PipSession,
@@ -99,7 +90,7 @@ def parse_requirements(
         #     file_link._url = parsed_req.requirement
         #     install_req.link = file_link
         # yield copy_install_requirement(install_req)
-        
+
         # This context manager helps pip locate relative paths specified
         # with non-URI (non file:) syntax, e.g. '-e ..'
         with working_dir(from_dir):
