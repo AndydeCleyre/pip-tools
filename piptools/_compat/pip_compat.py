@@ -27,8 +27,13 @@ from pip._vendor.pkg_resources import Requirement
 if TYPE_CHECKING:
     from pip._internal.metadata.importlib import Distribution as _ImportLibDist
 
-from ..utils import abs_ireq, copy_install_requirement, fragment_string, working_dir, PIP_VERSION
-
+from ..utils import (
+    PIP_VERSION,
+    abs_ireq,
+    copy_install_requirement,
+    fragment_string,
+    working_dir,
+)
 
 file_url_schemes_re = re.compile(r"^((git|hg|svn|bzr)\+)?file:")
 
