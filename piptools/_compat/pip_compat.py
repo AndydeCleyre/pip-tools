@@ -62,9 +62,12 @@ class Distribution:
 
     @classmethod
     def _from_importlib(cls, dist: _ImportLibDist) -> Distribution:
-        """Mimics pkg_resources.Distribution.requires for the case of no
-        extras. This doesn't fulfill that API's `extras` parameter but
-        satisfies the needs of pip-tools."""
+        """Mimic pkg_resources.Distribution.requires for the case of no
+        extras.
+
+        This doesn't fulfill that API's ``extras`` parameter but
+        satisfies the needs of pip-tools.
+        """
         reqs = (Requirement.parse(req) for req in (dist._dist.requires or ()))
         requires = [
             req
