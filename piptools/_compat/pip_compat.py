@@ -89,15 +89,6 @@ def parse_requirements(
     for parsed_req in _parse_requirements(
         filename, session, finder=finder, options=options, constraint=constraint
     ):
-        # Recent changes to main branch include this
-        # I need to check how it might fit in or not with this relpath branch:
-        # if install_req.editable and not parsed_req.requirement.startswith("file://"):
-        #     # ``Link.url`` is what is saved to the output file
-        #     # we set the url directly to undo the transformation in pip's Link class
-        #     file_link = FileLink(install_req.link.url)
-        #     file_link._url = parsed_req.requirement
-        #     install_req.link = file_link
-        # yield copy_install_requirement(install_req)
 
         # This context manager helps pip locate relative paths specified
         # with non-URI (non file:) syntax, e.g. '-e ..'

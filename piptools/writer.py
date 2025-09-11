@@ -12,6 +12,7 @@ from click import unstyle
 from click.core import Context
 from pip._internal.models.format_control import FormatControl
 from pip._internal.req.req_install import InstallRequirement
+from pip._internal.vcs import is_url
 from pip._vendor.packaging.markers import Marker
 from pip._vendor.packaging.utils import canonicalize_name
 
@@ -66,10 +67,11 @@ def _comes_from_as_string(
 
     match = comes_from_line_re.search(comes_from)
     if match:
-        with working_dir(from_dir):
-            with suppress(ValueError):
-                return f"{match['opts']} {os.path.relpath(match['path'])}"
-            # ValueError: it's impossible to construct the relative path
+        if not is_url(match["path"]):
+            with working_dir(from_dir):
+                with suppress(ValueError):
+                    return f"{match['opts']} {os.path.relpath(match['path'])}"
+                # ValueError: it's impossible to construct the relative path
         return f"{match['opts']} {match['path']}"
 
     match = comes_from_line_project_re.search(comes_from)
