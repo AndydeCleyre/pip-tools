@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import textwrap
 
 import pytest
+from build import BuildBackendException
 
 from piptools.build import (
     ProjectMetadata,
@@ -77,6 +79,36 @@ def test_build_project_metadata_raises_error(tmp_path):
         )
 
 
+def test_build_project_metadata_upgrading_raises_error(tmp_path):
+    """Test build_project_metadata doesn't swallow error."""
+    src_file = tmp_path / "pyproject.toml"
+    src_file.write_text(
+        textwrap.dedent(
+            """
+            [project]
+            # missing name
+            version = "0.1"
+            dependencies=["test_dep"]
+            """
+        ),
+    )
+    with pytest.raises(
+        BuildBackendException,
+        match=(
+            "Backend subprocess exited when trying to invoke "
+            "get_requires_for_build_wheel"
+        ),
+    ):
+        build_project_metadata(
+            src_file,
+            (),
+            attempt_static_parse=False,
+            isolated=True,
+            quiet=False,
+            upgrade_packages=["test_dep"],
+        )
+
+
 def test_static_parse_valid(tmp_path):
     src_file = tmp_path / "pyproject.toml"
 
@@ -93,6 +125,50 @@ baz = ["qux[extra]"]
     assert isinstance(metadata, StaticProjectMetadata)
     assert [str(r.req) for r in metadata.requirements] == ["bar>=1", "qux[extra]"]
     assert metadata.extras == ("baz",)
+
+
+@pytest.mark.parametrize(
+    "input_path_is_absolute",
+    (True, False),
+    ids=("absolute-input", "relative-input"),
+)
+def test_static_parse_of_self_referential_extra(
+    tmp_path, monkeypatch, input_path_is_absolute
+):
+    monkeypatch.chdir(tmp_path)
+
+    src_file = tmp_path / "pyproject.toml"
+    src_file.write_text(
+        textwrap.dedent(
+            """
+            [project]
+            name = "foo"
+            version = "0.1.0"
+            [project.optional-dependencies]
+            ext1 = ["bar"]
+            ext2 = ["foo[ext1]"]
+            """
+        )
+    )
+
+    if input_path_is_absolute:
+        parse_path = src_file
+    else:
+        parse_path = src_file.relative_to(tmp_path)
+
+    metadata = maybe_statically_parse_project_metadata(parse_path)
+    assert isinstance(metadata, StaticProjectMetadata)
+    assert metadata.extras == ("ext1", "ext2")
+    assert len(metadata.requirements) == 2
+
+    assert [r.name for r in metadata.requirements] == ["bar", "foo"]
+    assert [r.comes_from for r in metadata.requirements] == [
+        f"foo ({parse_path.as_posix()})"
+    ] * 2
+
+    foo_req = metadata.requirements[1]
+    assert foo_req.extras == {"ext1"}
+    assert foo_req.link.url == tmp_path.as_uri()
 
 
 def test_static_parse_invalid(tmp_path):
@@ -136,3 +212,37 @@ dynamic = ["optional-dependencies"]
     src_file = tmp_path / "setup.py"
     src_file.write_text("print('hello')")
     assert maybe_statically_parse_project_metadata(src_file) is None
+
+
+@pytest.mark.network
+def test_build_metadata_from_dynamic_dependencies(tmp_path):
+    pyproject_file = tmp_path / "pyproject.toml"
+    setuppy_file = tmp_path / "setup.py"
+
+    pyproject_file.write_text(
+        textwrap.dedent(
+            """
+            [project]
+            name = "foo"
+            version = "0.1.0"
+            dynamic = ["dependencies"]
+            """
+        )
+    )
+    setuppy_file.write_text(
+        textwrap.dedent(
+            """\
+            from setuptools import setup
+            setup(install_requires=["bar > 2"])
+            """
+        )
+    )
+
+    metadata = build_project_metadata(
+        pyproject_file, (), attempt_static_parse=True, isolated=True, quiet=False
+    )
+    assert isinstance(metadata, ProjectMetadata)
+    assert [str(r.req) for r in metadata.requirements] == ["bar>2"]
+    assert [r.comes_from for r in metadata.requirements] == [
+        f"foo ({pyproject_file.as_posix()})"
+    ]

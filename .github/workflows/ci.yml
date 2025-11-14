@@ -7,12 +7,19 @@ on:
     branches:
       - main
     tags:
+      - v*
   workflow_call:
     inputs:
       cpython-pip-version:
         description: >-
           A JSON string with pip versions
           to test against under CPython.
+        required: true
+        type: string
+      cpython-versions:
+        description: >-
+          A JSON string with CPython versions
+          to test against.
         required: true
         type: string
 
@@ -53,12 +60,14 @@ jobs:
           - Ubuntu
           - Windows
           - macOS
-        python-version:
-          - "3.12"
-          - "3.11"
-          - "3.10"
-          - "3.9"
-          - "3.8"
+        python-version: >-
+          ${{
+            fromJSON(
+              inputs.cpython-versions
+              && inputs.cpython-versions
+              || '["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]'
+            )
+          }}
         pip-version: >-
           ${{
             fromJSON(
@@ -75,11 +84,11 @@ jobs:
           || ''
         }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Set up Python ${{ matrix.python-version }} from GitHub
         id: python-install
         if: "!endsWith(matrix.python-version, '-dev')"
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Set up Python ${{ matrix.python-version }} from deadsnakes
@@ -95,7 +104,7 @@ jobs:
         run: |
           echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
       - name: Pip cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pip-cache.outputs.dir }}
           key: >-
@@ -115,6 +124,11 @@ jobs:
         #
         # Ref: https://github.com/tox-dev/tox/issues/3193
         run: tox -vv --notest -p auto --parallel-live
+      - name: Set PYTEST_ADDOPTS for py38
+        if: matrix.python-version == '3.8'
+        shell: bash
+        run: |
+          echo "PYTEST_ADDOPTS=--cov-fail-under=98" >> $GITHUB_ENV
       - name: Test pip ${{ matrix.pip-version }}
         # NOTE: `--parallel-live` is a workaround for the regression in
         # NOTE: the upstream tox project that made the
@@ -123,10 +137,35 @@ jobs:
         #
         # Ref: https://github.com/tox-dev/tox/issues/3193
         run: tox --skip-pkg-install --parallel-live
+      - name: Re-run the failing tests with maximum verbosity
+        if: >-
+          !cancelled()
+          && failure()
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          python -Xutf8 -Im
+          tox
+          --parallel=auto
+          --parallel-live
+          --skip-missing-interpreters=false
+          --skip-pkg-install
+          -vvvvv
+          --
+          --continue-on-collection-errors
+          --full-trace
+          --last-failed
+          ${{ !inputs.cpython-pip-version && '--no-cov' || '' }}
+          --numprocesses=0
+          --showlocals
+          --trace-config
+          -rA
+          -vvvvv
+          && exit 1
+        shell: bash
       - name: Upload coverage to Codecov
         if: >-
-          !inputs.cpython-pip-version
-        uses: codecov/codecov-action@v3
+          !cancelled()
+          && !inputs.cpython-pip-version
+        uses: codecov/codecov-action@v5
         with:
           files: ./coverage.xml
           flags: >-
@@ -158,9 +197,9 @@ jobs:
     env:
       TOXENV: pip${{ matrix.pip-version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Get pip cache dir
@@ -169,7 +208,7 @@ jobs:
         run: |
           echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
       - name: Pip cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pip-cache.outputs.dir }}
           key: >-
@@ -197,6 +236,46 @@ jobs:
         #
         # Ref: https://github.com/tox-dev/tox/issues/3193
         run: tox --skip-pkg-install --parallel-live
+      - name: Re-run the failing tests with maximum verbosity
+        if: >-
+          !cancelled()
+          && failure()
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          python -Xutf8 -Im
+          tox
+          --parallel=auto
+          --parallel-live
+          --skip-missing-interpreters=false
+          --skip-pkg-install
+          -vvvvv
+          --
+          --continue-on-collection-errors
+          --full-trace
+          --last-failed
+          --numprocesses=0
+          --showlocals
+          --trace-config
+          -rA
+          -vvvvv
+          && exit 1
+        shell: bash
+
+  coverage-summary:
+    name: Coverage processing
+    if: >-
+      !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    needs:
+      - test
+    steps:
+      - name: Notify Codecov that all coverage reports have been uploaded
+        if: >-
+          !cancelled()
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          run_command: send-notifications
 
   check: # This job does nothing and is only used for the branch protection
     if: always()

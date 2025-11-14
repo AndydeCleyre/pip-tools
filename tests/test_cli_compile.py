@@ -5,6 +5,7 @@ import hashlib
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -67,9 +68,11 @@ class TestFilesCollection:
     """
 
     # the name for the collection of files
-    name: str
+    name: str = "<unnamed test file collection>"
     # static or computed contents
-    contents: dict[str, str | typing.Callable[[pathlib.Path], str]]
+    contents: dict[str, str | typing.Callable[[pathlib.Path], str]] = dataclasses.field(
+        default_factory=dict
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -165,7 +168,7 @@ def test_command_line_overrides_pip_conf(pip_with_index_conf, runner):
     ),
 )
 def test_command_line_setuptools_read(
-    runner, make_package, install_requires, expected_output
+    runner, make_package, minimal_wheels_path, install_requires, expected_output
 ):
     package_dir = make_package(
         name="fake-setuptools-a",
@@ -177,7 +180,7 @@ def test_command_line_setuptools_read(
         (
             str(package_dir / "setup.py"),
             "--find-links",
-            MINIMAL_WHEELS_PATH,
+            minimal_wheels_path.as_posix(),
             "--no-build-isolation",
         ),
     )
@@ -2058,6 +2061,41 @@ def test_forwarded_args(PyPIRepository, runner):
 
 
 @pytest.mark.parametrize(
+    "pip_args",
+    (
+        pytest.param(
+            ("--use-pep517", "--global-option=build_ext"),
+            id="use-pep517 and global-option",
+        ),
+        pytest.param(
+            ("--no-use-pep517", "--build-option=build_ext"),
+            id="no-use-pep517 and build-option",
+        ),
+    ),
+)
+@mock.patch("piptools.scripts.compile.PyPIRepository")
+def test_forwarded_args_filter_deprecated(PyPIRepository, runner, pip_args):
+    """
+    Test the cli args (``--pip-args 'arg...'``) are filtered out if pip no longer supports them.
+    """
+    pathlib.Path("requirements.in").write_text("", encoding="utf-8")
+
+    cli_args = ("--no-annotate", "--generate-hashes")
+    runner.invoke(cli, [*cli_args, "--pip-args", shlex.join(pip_args)])
+    pip_option_keys = {pip_arg.split("=")[0] for pip_arg in pip_args}
+
+    (first_posarg, *_tail_args), _kwargs = PyPIRepository.call_args
+
+    pip_current_version = get_pip_version_for_python_executable(sys.executable)
+    pip_breaking_version = Version("25.3")
+
+    if pip_current_version >= pip_breaking_version:  # pragma: >=3.9 cover
+        assert set(first_posarg) ^ pip_option_keys
+    else:
+        assert set(first_posarg) & pip_option_keys
+
+
+@pytest.mark.parametrize(
     ("cli_option", "infile_option", "expected_package"),
     (
         # no --pre pip-compile should resolve to the last stable version
@@ -3706,7 +3744,12 @@ def test_pass_pip_cache_to_pip_args(tmpdir, runner, current_resolver):
 
 
 @backtracking_resolver_only
-def test_compile_recursive_extras_static(runner, tmp_path, current_resolver):
+def test_compile_recursive_extras_static(
+    runner,
+    tmp_path,
+    minimal_wheels_path,
+    current_resolver,
+):
     (tmp_path / "pyproject.toml").write_text(
         dedent(
             """
@@ -3730,7 +3773,7 @@ def test_compile_recursive_extras_static(runner, tmp_path, current_resolver):
             "--extra",
             "dev",
             "--find-links",
-            os.fspath(MINIMAL_WHEELS_PATH),
+            minimal_wheels_path.as_posix(),
             os.fspath(tmp_path / "pyproject.toml"),
             "--output-file",
             "-",
@@ -3750,7 +3793,9 @@ small-fake-b==0.3
 
 
 @backtracking_resolver_only
-def test_compile_recursive_extras_build_targets(runner, tmp_path, current_resolver):
+def test_compile_recursive_extras_build_targets(
+    runner, tmp_path, minimal_wheels_path, current_resolver
+):
     (tmp_path / "pyproject.toml").write_text(
         dedent(
             """
@@ -3776,7 +3821,7 @@ def test_compile_recursive_extras_build_targets(runner, tmp_path, current_resolv
             "--build-deps-for",
             "wheel",
             "--find-links",
-            os.fspath(MINIMAL_WHEELS_PATH),
+            minimal_wheels_path.as_posix(),
             os.fspath(tmp_path / "pyproject.toml"),
             "--output-file",
             "-",
@@ -3802,6 +3847,7 @@ small-fake-b==0.3
 def test_compile_build_targets_setuptools_no_wheel_dep(
     runner,
     tmp_path,
+    minimal_wheels_path,
     current_resolver,
 ):
     """Check that user requests apply to build dependencies.
@@ -3842,7 +3888,7 @@ def test_compile_build_targets_setuptools_no_wheel_dep(
             "--build-deps-for",
             "wheel",
             "--find-links",
-            os.fspath(MINIMAL_WHEELS_PATH),
+            minimal_wheels_path.as_posix(),
             os.fspath(tmp_path / "pyproject.toml"),
             "--constraint",
             os.fspath(tmp_path / "constraints.txt"),
@@ -4254,6 +4300,50 @@ def test_second_order_requirements_relative_path_in_separate_dir(
     )
 
 
+def test_second_order_requirements_can_be_in_parent_of_cwd(
+    pip_conf,
+    runner,
+    tmp_path,
+    monkeypatch,
+    pip_produces_absolute_paths,
+):
+    """
+    Test handling of ``-r`` includes when the included requirements file is in the
+    parent of the current working directory.
+    """
+    test_files_collection = TestFilesCollection(
+        contents={
+            "subdir1/requirements.in": "-r ../requirements2.in\n",
+            "requirements2.in": "small-fake-a\n",
+        }
+    )
+    test_files_collection.populate(tmp_path)
+
+    with monkeypatch.context() as revertable_ctx:
+        # cd into the subdir where the initial requirements are
+        revertable_ctx.chdir(tmp_path / "subdir1")
+        out = runner.invoke(
+            cli,
+            [
+                "--output-file",
+                "-",
+                "--quiet",
+                "--no-header",
+                "--no-emit-options",
+                "-r",
+                "requirements.in",
+            ],
+        )
+
+    assert out.exit_code == 0
+    assert out.stdout == dedent(
+        """\
+        small-fake-a==0.2
+            # via -r ../requirements2.in
+        """
+    )
+
+
 @pytest.mark.parametrize(
     "input_path_absolute", (True, False), ids=("absolute-input", "relative-input")
 )
@@ -4326,5 +4416,69 @@ def test_url_constraints_are_not_treated_as_file_paths(
             # via
             #   -c {constraints_url}
             #   -r requirements.in
+        """
+    )
+
+
+@pytest.mark.parametrize(
+    "pyproject_path_is_absolute",
+    (True, False),
+    ids=("absolute-input", "relative-input"),
+)
+def test_that_self_referential_pyproject_toml_extra_can_be_compiled(
+    pip_conf, runner, tmp_path, monkeypatch, pyproject_path_is_absolute
+):
+    """
+    Test that a :file:`pyproject.toml` source file can use self-referential extras
+    which point back to the original package name.
+
+    This is a regression test for:
+    https://github.com/jazzband/pip-tools/issues/2215
+    """
+    src_file = tmp_path / "pyproject.toml"
+    src_file.write_text(
+        dedent(
+            """
+            [project]
+            name = "foo"
+            version = "0.1.0"
+            [project.optional-dependencies]
+            ext1 = ["small-fake-a"]
+            ext2 = ["foo[ext1]"]
+            """
+        )
+    )
+
+    if pyproject_path_is_absolute:
+        input_path = src_file.relative_to(tmp_path).as_posix()
+    else:
+        input_path = src_file.relative_to(tmp_path).as_posix()
+
+    with monkeypatch.context() as revertable_ctx:
+        revertable_ctx.chdir(tmp_path)
+        out = runner.invoke(
+            cli,
+            [
+                "--output-file",
+                "-",
+                "--quiet",
+                "--no-header",
+                "--no-emit-options",
+                # use in-process setuptools
+                "--no-build-isolation",
+                # importantly, request the extra which uses the self-reference
+                "--extra",
+                "ext2",
+                input_path,
+            ],
+        )
+
+    assert out.exit_code == 0
+    assert out.stdout == dedent(
+        f"""\
+        foo[ext1] @ {src_file.parent.absolute().as_uri()}
+            # via foo ({input_path})
+        small-fake-a==0.2
+            # via foo
         """
     )

@@ -514,7 +514,7 @@ def get_compile_command(click_ctx: click.Context) -> str:
                 continue
 
         # Skip options without a value
-        if option.default is None and not value:
+        if value is None:
             continue
 
         # Skip options with a default value
@@ -615,15 +615,22 @@ def copy_install_requirement(
         "editable": template.editable,
         "link": template.link,
         "markers": template.markers,
-        "use_pep517": template.use_pep517,
         "isolated": template.isolated,
-        "global_options": template.global_options,
         "hash_options": template.hash_options,
         "constraint": template.constraint,
         "extras": template.extras,
         "user_supplied": template.user_supplied,
     }
+    if PIP_VERSION[:2] < (25, 3):  # pragma: <3.9 cover
+        # Ref: https://github.com/jazzband/pip-tools/issues/2252
+        kwargs["use_pep517"] = template.use_pep517
+        kwargs["global_options"] = template.global_options
     kwargs.update(extra_kwargs)
+
+    if PIP_VERSION[:2] >= (25, 3):  # pragma: >=3.9 cover
+        # Ref: https://github.com/jazzband/pip-tools/issues/2252
+        kwargs.pop("use_pep517", None)
+        kwargs.pop("global_options", None)
 
     if PIP_VERSION[:2] <= (23, 0):
         kwargs["install_options"] = template.install_options
