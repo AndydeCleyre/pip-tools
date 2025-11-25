@@ -4,9 +4,10 @@ import io
 import os
 import re
 import sys
+from collections.abc import Iterable, Iterator
 from contextlib import suppress
 from itertools import chain
-from typing import BinaryIO, Iterable, Iterator, cast
+from typing import BinaryIO, cast
 
 from click import unstyle
 from click.core import Context

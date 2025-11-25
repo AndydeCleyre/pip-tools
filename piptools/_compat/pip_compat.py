@@ -3,8 +3,9 @@ from __future__ import annotations
 import optparse
 import platform
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable, Iterator, Set, cast
+from typing import TYPE_CHECKING, cast
 
 from pip._internal.cache import WheelCache
 from pip._internal.exceptions import InstallationError
@@ -163,8 +164,8 @@ def get_dev_pkgs() -> set[str]:
     if PIP_VERSION[:2] <= (23, 1):
         from pip._internal.commands.freeze import DEV_PKGS
 
-        return cast(Set[str], DEV_PKGS)
+        return cast(set[str], DEV_PKGS)
 
     from pip._internal.commands.freeze import _dev_pkgs
 
-    return cast(Set[str], _dev_pkgs())
+    return cast(set[str], _dev_pkgs())
