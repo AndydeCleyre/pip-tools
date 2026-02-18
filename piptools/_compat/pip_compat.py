@@ -3,9 +3,9 @@ from __future__ import annotations
 import optparse
 import platform
 import re
+import typing as _t
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
 
 from pip._internal.cache import WheelCache
 from pip._internal.exceptions import InstallationError
@@ -25,16 +25,18 @@ from pip._vendor.pkg_resources import Requirement
 # importlib.metadata, so this compat layer allows for a consistent access
 # pattern. In pip 22.1, importlib.metadata became the default on Python 3.11
 # (and later), but is overridable. `select_backend` returns what's being used.
-if TYPE_CHECKING:
+# Secondly, the canonicalize_name function received typing improvements
+# in pip 21.2, since mypy runs on an older version, this compat layer ensures correct
+# typing regardless of the pip version used. NormalizedName and str are interchangeable.
+if _t.TYPE_CHECKING:
     from pip._internal.metadata.importlib import Distribution as _ImportLibDist
 
-from ..utils import (
-    PIP_VERSION,
-    abs_ireq,
-    copy_install_requirement,
-    fragment_string,
-    working_dir,
-)
+    def canonicalize_name(name: str) -> str: ...
+
+else:
+    from pip._vendor.packaging.utils import canonicalize_name  # noqa: F401
+
+from .._internal import _pip_api, _relpaths
 
 file_url_schemes_re = re.compile(r"^((git|hg|svn|bzr)\+)?file:")
 
@@ -93,7 +95,7 @@ def parse_requirements(
 
         # This context manager helps pip locate relative paths specified
         # with non-URI (non file:) syntax, e.g. '-e ..'
-        with working_dir(from_dir):
+        with _relpaths.working_dir(from_dir):
             try:
                 ireq = install_req_from_parsed_requirement(
                     parsed_req, isolated=isolated
@@ -120,7 +122,7 @@ def parse_requirements(
         #   which is needed for the writer to use the relpath.
 
         # To account for the first:
-        if not fragment_string(ireq):
+        if not _relpaths.fragment_string(ireq):
             fragment = Link(parsed_req.requirement)._parsed_url.fragment
             if fragment:
                 link_with_fragment = Link(
@@ -130,9 +132,9 @@ def parse_requirements(
                     yanked_reason=ireq.link.yanked_reason,
                     cache_link_parsing=ireq.link.cache_link_parsing,
                 )
-                ireq = copy_install_requirement(ireq, link=link_with_fragment)
+                ireq = _pip_api.copy_install_requirement(ireq, link=link_with_fragment)
 
-        a_ireq = abs_ireq(ireq, from_dir)
+        a_ireq = _relpaths.abs_ireq(ireq, from_dir)
 
         # To account for the second, we guess if the path was initially relative and
         # set _was_relative ourselves:
@@ -155,17 +157,17 @@ def parse_requirements(
 
 def create_wheel_cache(cache_dir: str, format_control: str | None = None) -> WheelCache:
     kwargs: dict[str, str | None] = {"cache_dir": cache_dir}
-    if PIP_VERSION[:2] <= (23, 0):
+    if _pip_api.PIP_VERSION_MAJOR_MINOR <= (23, 0):
         kwargs["format_control"] = format_control
     return WheelCache(**kwargs)
 
 
 def get_dev_pkgs() -> set[str]:
-    if PIP_VERSION[:2] <= (23, 1):
+    if _pip_api.PIP_VERSION_MAJOR_MINOR <= (23, 1):
         from pip._internal.commands.freeze import DEV_PKGS
 
-        return cast(set[str], DEV_PKGS)
+        return _t.cast(set[str], DEV_PKGS)
 
     from pip._internal.commands.freeze import _dev_pkgs
 
-    return cast(set[str], _dev_pkgs())
+    return _t.cast(set[str], _dev_pkgs())

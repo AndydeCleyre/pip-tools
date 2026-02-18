@@ -4,10 +4,10 @@ import io
 import os
 import re
 import sys
+import typing as _t
 from collections.abc import Iterable, Iterator
 from contextlib import suppress
 from itertools import chain
-from typing import BinaryIO, cast
 
 from click import unstyle
 from click.core import Context
@@ -15,8 +15,9 @@ from pip._internal.models.format_control import FormatControl
 from pip._internal.req.req_install import InstallRequirement
 from pip._internal.vcs import is_url
 from pip._vendor.packaging.markers import Marker
-from pip._vendor.packaging.utils import canonicalize_name
 
+from ._compat import canonicalize_name
+from ._internal._relpaths import working_dir
 from .logging import log
 from .utils import (
     comment,
@@ -25,7 +26,6 @@ from .utils import (
     get_compile_command,
     key_from_ireq,
     strip_extras,
-    working_dir,
 )
 
 MESSAGE_UNHASHED_PACKAGE = comment(
@@ -64,7 +64,7 @@ def _comes_from_as_string(
     comes_from: str | InstallRequirement, from_dir: str | None = None
 ) -> str:
     if not isinstance(comes_from, str):
-        return cast(str, canonicalize_name(key_from_ireq(comes_from)))
+        return canonicalize_name(key_from_ireq(comes_from))
 
     match = comes_from_line_re.search(comes_from)
     if match:
@@ -106,7 +106,7 @@ def annotation_style_line(required_by: set[str]) -> str:
 class OutputWriter:
     def __init__(
         self,
-        dst_file: BinaryIO,
+        dst_file: _t.BinaryIO,
         click_ctx: Context,
         dry_run: bool,
         emit_header: bool,

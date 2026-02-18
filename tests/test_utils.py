@@ -7,20 +7,18 @@ import platform
 import re
 import shlex
 import sys
+import typing as _t
 from pathlib import Path
 from textwrap import dedent
-from typing import Callable
 
-import pip
 import pytest
 from click import BadOptionUsage, Context, FileError
 from pip._internal.req import InstallRequirement
 from pip._internal.resolution.resolvelib.requirements import SpecifierRequirement
-from pip._vendor.packaging.version import Version
 
+from piptools._internal._relpaths import abs_ireq, working_dir
 from piptools.scripts.compile import cli as compile_cli
 from piptools.utils import (
-    abs_ireq,
     as_tuple,
     dedup,
     drop_extras,
@@ -30,7 +28,6 @@ from piptools.utils import (
     get_cli_options,
     get_compile_command,
     get_hashes_from_ireq,
-    get_pip_version_for_python_executable,
     get_sys_path_for_python_executable,
     is_pinned_requirement,
     is_url_requirement,
@@ -40,7 +37,6 @@ from piptools.utils import (
     lookup_table_from_tuples,
     override_defaults_from_config_file,
     select_config_file,
-    working_dir,
 )
 
 
@@ -314,7 +310,7 @@ def test_key_from_ireq_normalization(from_line):
     ),
 )
 def test_key_from_req_on_install_requirement(
-    from_line: Callable[[str], InstallRequirement],
+    from_line: _t.Callable[[str], InstallRequirement],
     line: str,
     expected: str,
 ) -> None:
@@ -334,7 +330,7 @@ def test_key_from_req_on_install_requirement(
     ),
 )
 def test_key_from_req_on_specifier_requirement(
-    from_line: Callable[[str], InstallRequirement],
+    from_line: _t.Callable[[str], InstallRequirement],
     line: str,
     expected: str,
 ) -> None:
@@ -655,11 +651,6 @@ def test_drop_extras(from_line, given, expected):
         assert str(ireq.markers).replace("'", '"') == expected.replace("'", '"')
 
 
-def test_get_pip_version_for_python_executable():
-    result = get_pip_version_for_python_executable(sys.executable)
-    assert Version(pip.__version__) == result
-
-
 def test_get_sys_path_for_python_executable():
     result = get_sys_path_for_python_executable(sys.executable)
     assert result, "get_sys_path_for_python_executable should not return empty result"
@@ -847,14 +838,10 @@ def test_select_config_file_prefers_pip_tools_toml_over_pyproject_toml(tmpdir_cw
     pip_tools_file.touch()
 
     pyproject_file = Path("pyproject.toml")
-    pyproject_file.write_text(
-        dedent(
-            """\
+    pyproject_file.write_text(dedent("""\
             [build-system]
             requires = ["setuptools>=63", "setuptools_scm[toml]>=7"]
             build-backend = "setuptools.build_meta"
-            """
-        )
-    )
+            """))
 
     assert select_config_file(()) == pip_tools_file

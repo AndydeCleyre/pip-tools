@@ -6,13 +6,13 @@ import platform
 import shutil
 import subprocess
 import sys
+import typing as _t
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from importlib.metadata import version as version_of
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, cast
 
 import pytest
 import tomli_w
@@ -31,6 +31,7 @@ from pip._vendor.packaging.version import Version
 from pip._vendor.pkg_resources import Requirement
 
 from piptools._compat import Distribution
+from piptools._internal import _pip_api
 from piptools.cache import DependencyCache
 from piptools.exceptions import NoCandidateFound
 from piptools.locations import DEFAULT_CONFIG_FILE_NAMES
@@ -39,11 +40,9 @@ from piptools.repositories import PyPIRepository
 from piptools.repositories.base import BaseRepository
 from piptools.resolver import BacktrackingResolver, LegacyResolver
 from piptools.utils import (
-    PIP_VERSION,
     as_tuple,
     is_url_requirement,
     key_from_ireq,
-    make_install_requirement,
 )
 
 from .constants import MINIMAL_WHEELS_PATH, TEST_DATA_PATH
@@ -90,7 +89,9 @@ class FakeRepository(BaseRepository):
             ]
             raise NoCandidateFound(ireq, tried_versions, ["https://fake.url.foo"])
         best_version = max(versions, key=Version)
-        return make_install_requirement(key_from_ireq(ireq), best_version, ireq)
+        return _pip_api.create_install_requirement(
+            key_from_ireq(ireq), best_version, ireq
+        )
 
     def get_dependencies(self, ireq):
         if ireq.editable or is_url_requirement(ireq):
@@ -212,7 +213,7 @@ def base_resolver(depcache):
 @pytest.fixture
 def from_line():
     def _from_line(*args, **kwargs):
-        if PIP_VERSION[:2] <= (23, 0):
+        if _pip_api.PIP_VERSION_MAJOR_MINOR <= (23, 0):
             hash_options = kwargs.pop("hash_options", {})
             options = kwargs.pop("options", {})
             options["hashes"] = hash_options
@@ -268,28 +269,20 @@ def make_pip_conf(tmpdir, monkeypatch):
 
 @pytest.fixture
 def pip_conf(make_pip_conf, minimal_wheels_path):
-    return make_pip_conf(
-        dedent(
-            f"""\
+    return make_pip_conf(dedent(f"""\
             [global]
             no-index = true
             find-links = {minimal_wheels_path.as_posix()}
-            """
-        )
-    )
+            """))
 
 
 @pytest.fixture
 def pip_with_index_conf(make_pip_conf, minimal_wheels_path):
-    return make_pip_conf(
-        dedent(
-            f"""\
+    return make_pip_conf(dedent(f"""\
             [global]
             index-url = http://example.com
             find-links = {minimal_wheels_path.as_posix()}
-            """
-        )
-    )
+            """))
 
 
 @pytest.fixture(scope="session")
@@ -319,9 +312,7 @@ def make_package(tmp_path_factory):
         package_dir.mkdir(parents=True)
 
         with (package_dir / "setup.py").open("w") as fp:
-            fp.write(
-                dedent(
-                    f"""\
+            fp.write(dedent(f"""\
                     from setuptools import setup
                     setup(
                         name={name!r},
@@ -333,9 +324,7 @@ def make_package(tmp_path_factory):
                         extras_require={extras_require},
                         py_modules=[{name!r}],
                     )
-                    """
-                )
-            )
+                    """))
 
         # Create a README to avoid setuptools warnings.
         (package_dir / "README").touch()
@@ -345,14 +334,10 @@ def make_package(tmp_path_factory):
 
         if build_system_requires:
             with (package_dir / "pyproject.toml").open("w") as fp:
-                fp.write(
-                    dedent(
-                        f"""\
+                fp.write(dedent(f"""\
                         [build-system]
                         requires = {json.dumps(build_system_requires)}
-                        """
-                    )
-                )
+                        """))
 
         return package_dir
 
@@ -505,7 +490,7 @@ def make_config_file(tmpdir_cwd):
 
     def _maker(
         pyproject_param: str,
-        new_default: Any,
+        new_default: _t.Any,
         config_file_name: str = DEFAULT_CONFIG_FILE_NAMES[0],
         section: str = "pip-tools",
         subsection: str | None = None,
@@ -522,7 +507,7 @@ def make_config_file(tmpdir_cwd):
             nested_config = {subsection: nested_config}
         config_to_dump = {"tool": {section: nested_config}}
         config_file.write_text(tomli_w.dumps(config_to_dump))
-        return cast(Path, config_file.relative_to(tmpdir_cwd))
+        return _t.cast(Path, config_file.relative_to(tmpdir_cwd))
 
     return _maker
 

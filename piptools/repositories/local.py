@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import optparse
+import typing as _t
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import cast
 
 from pip._internal.commands.install import InstallCommand
 from pip._internal.index.package_finder import PackageFinder
@@ -12,8 +12,8 @@ from pip._internal.network.session import PipSession
 from pip._internal.req import InstallRequirement
 from pip._internal.utils.hashes import FAVORITE_HASH
 
-from piptools.utils import as_tuple, key_from_ireq, make_install_requirement
-
+from .._internal import _pip_api
+from ..utils import as_tuple, key_from_ireq
 from .base import BaseRepository
 from .pypi import PyPIRepository
 
@@ -29,7 +29,7 @@ def ireq_satisfied_by_existing_pin(
     result = ireq.req.specifier.contains(
         version, prereleases=existing_pin.req.specifier.prereleases
     )
-    return cast(bool, result)
+    return _t.cast(bool, result)
 
 
 class LocalRequirementsRepository(BaseRepository):
@@ -80,7 +80,7 @@ class LocalRequirementsRepository(BaseRepository):
         existing_pin = self.existing_pins.get(key)
         if existing_pin and ireq_satisfied_by_existing_pin(ireq, existing_pin):
             project, version, _ = as_tuple(existing_pin)
-            return make_install_requirement(project, version, ireq)
+            return _pip_api.create_install_requirement(project, version, ireq)
         else:
             return self.repository.find_best_match(ireq, prereleases)
 

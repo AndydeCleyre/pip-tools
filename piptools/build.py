@@ -6,10 +6,10 @@ import os
 import pathlib
 import sys
 import tempfile
+import typing as _t
 from collections.abc import Iterator
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
-from typing import Any, Protocol, TypeVar, overload
 
 import build
 import build.env
@@ -19,7 +19,7 @@ from pip._internal.req.constructors import parse_req_from_line
 from pip._vendor.packaging.markers import Marker
 from pip._vendor.packaging.requirements import Requirement
 
-from .utils import copy_install_requirement, install_req_from_line
+from ._internal import _pip_api
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -28,19 +28,19 @@ else:
 
 PYPROJECT_TOML = "pyproject.toml"
 
-_T = TypeVar("_T")
+_T = _t.TypeVar("_T")
 
 
 if sys.version_info >= (3, 10):
     from importlib.metadata import PackageMetadata
 else:
 
-    class PackageMetadata(Protocol):
-        @overload
-        def get_all(self, name: str, failobj: None = None) -> list[Any] | None: ...
+    class PackageMetadata(_t.Protocol):
+        @_t.overload
+        def get_all(self, name: str, failobj: None = None) -> list[_t.Any] | None: ...
 
-        @overload
-        def get_all(self, name: str, failobj: _T) -> list[Any] | _T: ...
+        @_t.overload
+        def get_all(self, name: str, failobj: _T) -> list[_t.Any] | _T: ...
 
 
 @dataclass
@@ -316,7 +316,7 @@ def _prepare_requirements(
             replaced_package_name = req.replace(package_name, str(package_dir), 1)
             parts = parse_req_from_line(replaced_package_name, comes_from)
 
-        yield copy_install_requirement(
+        yield _pip_api.copy_install_requirement(
             InstallRequirement(
                 parts.requirement,
                 comes_from,
@@ -350,4 +350,6 @@ def _prepare_build_requirements(
 
     for req, comes_from_sources in result.items():
         for comes_from in comes_from_sources:
-            yield install_req_from_line(req, comes_from=comes_from)
+            yield _pip_api.create_install_requirement_from_line(
+                req, comes_from=comes_from
+            )

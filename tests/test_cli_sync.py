@@ -10,9 +10,9 @@ import pytest
 from pip._internal.utils.urls import path_to_url
 from pip._vendor.packaging.version import Version
 
+from piptools._internal._relpaths import working_dir
 from piptools.scripts import sync
 from piptools.scripts.sync import cli
-from piptools.utils import working_dir
 
 
 @pytest.fixture(autouse=True)
@@ -295,17 +295,13 @@ def test_sync_relative_path(runner, tmp_path, relpath_prefix, written_from_txt):
     run_dir.mkdir(parents=True, exist_ok=True)
     pkg_path.mkdir(parents=True, exist_ok=True)
 
-    (pkg_path / "setup.py").write_text(
-        dedent(
-            """\
+    (pkg_path / "setup.py").write_text(dedent("""\
             from setuptools import setup
             setup(
                 name="fake-setuptools-a",
                 install_requires=["small-fake-a==0.1"]
             )
-            """
-        )
-    )
+            """))
 
     if written_from_txt:
         write_from_dir = txt_path.parent
@@ -372,7 +368,7 @@ def test_invalid_python_executable(runner, python_executable):
     assert out.stderr == message.format(python_executable)
 
 
-@mock.patch("piptools.scripts.sync.get_pip_version_for_python_executable")
+@mock.patch("piptools._internal._pip_api.get_pip_version_for_python_executable")
 def test_invalid_pip_version_in_python_executable(
     get_pip_version_for_python_executable, runner, tmp_path
 ):
